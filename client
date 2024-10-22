@@ -1,0 +1,61 @@
+import socket
+import json
+
+localhost= "127.0.0.1"
+portnumber=8080
+
+clientsocket= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+clientsocket.connect((localhost, portnumber))
+
+input= print ("enter registered if registered and not registered if not: ")
+if (input=="not registered"):
+    name= input ("enter name: ")
+    email= input("enter email: ")
+    address= input("enter address: ")
+    username=input ("enter username: ")
+    password= input("enter password: ")
+    data= {
+        "action":"register",
+        "name": name,
+        "email": email,
+        "address":address,
+        "username": username,
+        "password": password
+    }
+    clientsocket.sendall(json.dumps(data).encode("utf-8"))
+    response=clientsocket.recv(1024).decode()
+    print("server's response:", response)
+    getproductlist(clientsocket,username)
+    
+else:
+    email = input("enter email: ")
+    password= input("enter password: ")
+    data= {
+        "action":"login",
+        "username": username,
+        "password": password
+    }
+    clientsocket.sendall(json.dumps(data).encode("utf-8"))
+    response=clientsocket.recv(1024).decode()
+    print("server's response:", response)
+    
+    if response=="LOGIN SUCCESSFUL":
+        print (response)
+        getproductlist(clientsocket,username)
+    else:
+        print(response)
+        
+
+#to view 
+    data = {"action": "view_buyers"}
+    clientsocket.sendall(json.dumps(data).encode("utf-8"))
+    response = client_socket.recv(4096).decode()  # Assume the response can be large
+    buyersinfo = json.loads(response)
+
+    if not buyersinfo:
+        print("You have no buyers for your products.")
+    else:
+        for product, buyer in buyers_info.items():
+            print(f"Product: {product}, Buyer: {buyer}")
+
+   
