@@ -1,0 +1,77 @@
+import socket 
+import sqlite3
+
+db = sqlite3.connect() 
+cursor = db.cursor() 
+
+cursor.execute("CREATE TABLE if not exists login_info (name TEXT NOT NULL,email TEXT NOT NULL, address TEXT NOT NULL , username TEXT PRIMARY KEY NOT NULL, password TEXT NOT NULL)")
+
+cursor.execute("CREATE TABLE if not exists product_info (username TEXT PRIMARY KEY NOT NULL ,name TEXT NOT NULL, picture BLOB NOT NULL , price REAL NOT NULL, description TEXT NOT NULL)") 
+db.commit()
+
+def registration():
+    # Prompt for basic information
+    name = input("Enter name: ")
+    email = input("Enter email: ")
+    address = input("Enter address: ")
+    
+   
+    checker = False
+    while not checker:
+        username = input("Enter username: ")
+        
+       
+        cursor.execute("SELECT 1 FROM login_info WHERE username = ?", (username,))
+        if cursor.fetchone() is None:  # If no result, username is unique
+            checker = True
+        else:
+            print("Username already exists. Please try a different one.")
+    
+    password = input("Enter password: ")
+
+    try:
+       
+        cursor.execute("INSERT INTO login_info VALUES (?, ?, ?, ?, ?)", 
+                       (name, email, address, username, password))
+        db.commit()
+        print("Registration successful!")
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+        db.rollback()
+    
+def login():
+    checker = False
+    while not checker:
+        username = input("Enter username: ")
+        
+        
+        cursor.execute("SELECT 1 FROM login_info WHERE username = ?", (username,))
+        if cursor.fetchone() is None:  # If no result, username does not exist
+            print("Username does not exist. Please try again.")
+        else:
+            checker = True
+            anotherchecker = False
+            while not anotherchecker:
+                password = input("Enter password: ")
+                
+               
+                cursor.execute("SELECT 1 FROM login_info WHERE username = ? AND password = ?", (username, password))
+                if cursor.fetchone() is None:  # If no result, password does not match username
+                    print("Password does not match username. Try again.")
+                else:
+                    anotherchecker = True
+                    print("Logged in successfully!")
+    
+server_domain = '127.0.0.1' 
+server_port = 8080 
+server_socket = socket.socket(socket.AF_INET , socket.SOCK_STREAM) 
+server_socket.bind((server_domain, server_port))
+
+server_socket.listen() 
+print(f"Server is operating on {server_domain} : {server_port}")
+
+while True : 
+    client_socket , client_address = server_socket.accept() 
+    print(f"Connection from {client_address}")
+    
+    
