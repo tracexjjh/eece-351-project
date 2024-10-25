@@ -1,3 +1,4 @@
+
 import socket
 import json
 
@@ -7,14 +8,13 @@ portnumber=8080
 clientsocket= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 clientsocket.connect((localhost, portnumber))
 
-input= print ("enter registered if registered and not registered if not: ")
-if (input=="not registered"):
-    name= input ("enter name: ")
-    email= input("enter email: ")
-    address= input("enter address: ")
-    username=input ("enter username: ")
-    password= input("enter password: ")
-    data= {
+def register():
+    name= input ("Enter name: ")
+    email= input("Enter email: ")
+    address= input("Enter address: ")
+    username=input ("Enter username: ")
+    password= input("Enter password: ")
+    data1= {
         "action":"register",
         "name": name,
         "email": email,
@@ -22,40 +22,79 @@ if (input=="not registered"):
         "username": username,
         "password": password
     }
-    clientsocket.sendall(json.dumps(data).encode("utf-8"))
+    clientsocket.sendall(json.dumps(data1).encode("utf-8"))
     response=clientsocket.recv(1024).decode()
     print("server's response:", response)
-    getproductlist(clientsocket,username)
     
-else:
-    email = input("enter email: ")
+def login():
+    username = input("enter username: ")
     password= input("enter password: ")
-    data= {
+    data2= {
         "action":"login",
         "username": username,
         "password": password
     }
-    clientsocket.sendall(json.dumps(data).encode("utf-8"))
+    clientsocket.sendall(json.dumps(data2).encode("utf-8"))
     response=clientsocket.recv(1024).decode()
     print("server's response:", response)
-    
-    if response=="LOGIN SUCCESSFUL":
-        print (response)
-        getproductlist(clientsocket,username)
-    else:
-        print(response)
         
-
-#to view 
-    data = {"action": "view_buyers"}
+def viewproducts():
+    data = {"action": "viewbuyers"}
     clientsocket.sendall(json.dumps(data).encode("utf-8"))
-    response = client_socket.recv(4096).decode()  # Assume the response can be large
-    buyersinfo = json.loads(response)
+    response = clientsocket.recv(1024).decode()
+    products = json.loads(response)
+    print(products)
 
-    if not buyersinfo:
-        print("You have no buyers for your products.")
-    else:
-        for product, buyer in buyers_info.items():
-            print(f"Product: {product}, Buyer: {buyer}")
 
+def addproduct():
+    name=input("Enter product name: ")
+    description=input("Enter product description: ")
+    price=input("Enter product price: ")
+
+    data3 = {
+        'action':'addproduct',
+        'name':name,
+        'description':description,
+        'price':price
+    }
+    clientsocket.send(json.dumps(data3).encode("utf-8"))
+    response = clientsocket.recv(1024).decode()
+    print(response)
    
+def checkownerstatus():
+    ownername=input("enter owner name: ")
+    data4 ={
+        'action':'checkownerstatus',
+        'ownername':ownername
+    }
+    clientsocket.send(json.dumps(data4).encode("utf-8"))
+    response = clientsocket.recv(1024).decode()
+    print(response)
+
+clientsocket.close()
+
+def buy_products(selecteditems):
+    item_ids = [item.id for item in selecteditems]  
+    try:
+        response = send_request_to_server("purchase", item_ids)
+        print(response)  
+    except Exception as e:
+        print(f"Error during purchase: {e}")
+
+selected_items = select_problem()  
+if selected_items:
+    buy_products(selected_items)
+    
+def main():
+
+        action = input("Do you want to register (r) or login (l)? ")
+        if action == 'r':
+            register()
+        elif action == 'l':
+            login()
+            viewproducts()
+        else:
+            print("Invalid option. Please try again.")
+
+if __name__ == "__main__":
+    main()
