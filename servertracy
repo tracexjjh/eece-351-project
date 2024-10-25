@@ -6,7 +6,7 @@ cursor = db.cursor()
 
 cursor.execute("CREATE TABLE if not exists login_info (name TEXT NOT NULL,email TEXT NOT NULL, address TEXT NOT NULL , username TEXT PRIMARY KEY NOT NULL, password TEXT NOT NULL)")
 
-cursor.execute("CREATE TABLE if not exists product_info (username TEXT PRIMARY KEY NOT NULL ,name TEXT NOT NULL, picture BLOB NOT NULL , price REAL NOT NULL, description TEXT NOT NULL)") 
+cursor.execute("CREATE TABLE if not exists product_info (username TEXT PRIMARY KEY NOT NULL ,name TEXT NOT NULL, picture BLOB NOT NULL , price REAL NOT NULL, description TEXT NOT NULL, buyer TEXT NULL)") 
 db.commit()
 
 def registration():
@@ -15,12 +15,12 @@ def registration():
     email = input("Enter email: ")
     address = input("Enter address: ")
     
-   
+    # Check if the username is unique
     checker = False
     while not checker:
         username = input("Enter username: ")
         
-       
+        # Query database to check if username exists
         cursor.execute("SELECT 1 FROM login_info WHERE username = ?", (username,))
         if cursor.fetchone() is None:  # If no result, username is unique
             checker = True
@@ -30,7 +30,7 @@ def registration():
     password = input("Enter password: ")
 
     try:
-       
+        # Insert data into the database
         cursor.execute("INSERT INTO login_info VALUES (?, ?, ?, ?, ?)", 
                        (name, email, address, username, password))
         db.commit()
@@ -44,7 +44,7 @@ def login():
     while not checker:
         username = input("Enter username: ")
         
-        
+        # Query database to check if username exists
         cursor.execute("SELECT 1 FROM login_info WHERE username = ?", (username,))
         if cursor.fetchone() is None:  # If no result, username does not exist
             print("Username does not exist. Please try again.")
@@ -54,7 +54,7 @@ def login():
             while not anotherchecker:
                 password = input("Enter password: ")
                 
-               
+                # Query database to check if both username and password match
                 cursor.execute("SELECT 1 FROM login_info WHERE username = ? AND password = ?", (username, password))
                 if cursor.fetchone() is None:  # If no result, password does not match username
                     print("Password does not match username. Try again.")
@@ -62,6 +62,28 @@ def login():
                     anotherchecker = True
                     print("Logged in successfully!")
     
+def selectproducts():
+    productsselected=[]
+    cursor.execute("SELECT * FROM product_info WHERE name=?",(name,) )
+    product=cursor.fetchone()
+    if buyername==NULL:
+        productsselected.append(product)
+        confirmationmessage=f"Congratulations on your purchase. Please collect it from the AUB Post Office in three days"
+        serversocket.send(confirmationmessage.encode())
+        cursor.execute("UPDATE product_info WHERE name = ?", (buyername))
+        
+        db.commit()
+    else:
+        serversocket.send("product is not available, please choose another one".encode())
+        
+def addproducts():
+    cursor.execute("INSERT INTO product_info (username,name,picture,price,description)")
+    
+def getseller(username):
+    cursor.execute("SELECT name, buyer FROM product_info WHERE username=?", (username,))
+    results=cursor.fetchall()
+    return results
+
 server_domain = '127.0.0.1' 
 server_port = 8080 
 server_socket = socket.socket(socket.AF_INET , socket.SOCK_STREAM) 
@@ -74,4 +96,37 @@ while True :
     client_socket , client_address = server_socket.accept() 
     print(f"Connection from {client_address}")
     
+# Function to handle individual client connections
+def handle_client(conn, addr):
+    print(f"[NEW CONNECTION] {addr} connected.")
+    connected = True
     
+    while connected:
+        # Receive and decode message length from client
+        msg_length = conn.recv(HEADER).decode(FORMAT)
+        if msg_length:
+            msg = conn.recv(msg_length).decode(FORMAT)
+            
+            if msg == DISCONNECT_MESSAGE:
+                connected = False
+            
+            print(f"[{addr}] {msg}")
+            conn.send("Msg received".encode(FORMAT))
+
+    conn.close()
+    print(f"[CONNECTION CLOSED] {addr} disconnected.")
+
+# Function to start server and listen for new connections
+def start():
+    server.listen()
+    print(f"[LISTENING] Server is listening on {SERVER}:{PORT}")
+    
+    while True:
+        # Accept new connection and create a new thread
+        conn, addr = server.accept()
+        thread = threading.Thread(target=handle_client, args=(conn, addr))
+        thread.start()
+        print(f"[ACTIVE CONNECTIONS] {threading.activeCount() - 1}")
+
+print("[STARTING] server is starting...")
+start()
