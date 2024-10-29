@@ -1,9 +1,10 @@
 
+
 import socket
 import json
 
 localhost= "127.0.0.1"
-portnumber=8080
+portnumber=9091
 
 clientsocket= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 clientsocket.connect((localhost, portnumber))
@@ -24,7 +25,7 @@ def register():
     }
     clientsocket.sendall(json.dumps(data1).encode("utf-8"))
     response=clientsocket.recv(1024).decode()
-    print("server's response:", response)
+    print(response)
     
 def login():
     username = input("enter username: ")
@@ -36,15 +37,17 @@ def login():
     }
     clientsocket.sendall(json.dumps(data2).encode("utf-8"))
     response=clientsocket.recv(1024).decode()
-    print("server's response:", response)
+    print(response)
+    
         
 def viewproducts():
     data = {"action": "viewbuyers"}
     clientsocket.sendall(json.dumps(data).encode("utf-8"))
     response = clientsocket.recv(1024).decode()
     products = json.loads(response)
-    print(products)
-
+    print("Available products: ")
+    for product in products:
+        print(f"Name: {product['name']}, Price: {product['price']}, Description: {product['description']}")
 
 def addproduct():
     name=input("Enter product name: ")
@@ -73,28 +76,72 @@ def checkownerstatus():
 
 clientsocket.close()
 
-def buy_products(selecteditems):
-    item_ids = [item.id for item in selecteditems]  
-    try:
-        response = send_request_to_server("purchase", item_ids)
-        print(response)  
-    except Exception as e:
-        print(f"Error during purchase: {e}")
-
-selected_items = select_problem()  
-if selected_items:
-    buy_products(selected_items)
+def buyproduct():
+    productname=input("Enter the product name you want to buy: ")
+    data5={
+        "action":"buyproduct",
+        "productname":productname
+        }
+    clientsocket.send(json.dumps(data5).encode("utf-8"))
+    response = clientsocket.recv(1024).decode()
+    print(response)
     
-def main():
+def sendmessage():
+    recipient=input("Enter the recipient's username: ")
+    message=input("Enter the message: ")
+    data6={
+        "action":"sendingmessage",
+        "recipient":recipient,
+        "message:":message
+        }
+        
+    clientsocket.send(json.dumps(data6).encode("utf-8"))
+    response = clientsocket.recv(1024).decode()
+    print(response)
+    
+def online():
+    ownername=input("Enter the owner's username to check if they are online: ")
+    data7={
+        "action": "checkownerstatus",
+        "ownername": ownername
+    }
+    clientsocket.send(json.dumps(data7).encode("utf-8"))
+    response = clientsocket.recv(1024).decode()
+    print(response)
 
-        action = input("Do you want to register (r) or login (l)? ")
+def main():
+    while True:
+        action = input("Do you want to register (r), login (l), or exit (e)? ").lower()
         if action == 'r':
             register()
         elif action == 'l':
-            login()
-            viewproducts()
+            if login():
+                while True:
+                    option = input("Options: view products (v), add product (a), buy product (b), send message (m), check owner status (c), or logout (o): ").lower()
+                    if option == 'v':
+                        viewproducts()
+                    elif option == 'a':
+                        addproduct()
+                    elif option == 'b':
+                        buyproduct()
+                    elif option == 'm':
+                        sendmessage()
+                    elif option == 'c':
+                        online()
+                    elif option == 'o':
+                        print("Logging out...")
+                        break
+                    else:
+                        print("Invalid option. Please try again.")
+        elif action=='e':
+            print("Exiting...")
+            break
         else:
-            print("Invalid option. Please try again.")
+            print("Invalid input. Please try again.")
+    clientsocket.close()
 
 if __name__ == "__main__":
     main()
+
+clientsocket.close()
+
