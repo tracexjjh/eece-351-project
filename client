@@ -1,147 +1,255 @@
-
-
 import socket
+import bcrypt
+import threading
+import os
+from prettytable import PrettyTable
+import base64
 import json
+import sys
 
-localhost= "127.0.0.1"
-portnumber=9091
+# Client setup
+server_domain = "127.0.0.1"  # Server IP Address
+server_port = 6656
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-clientsocket= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-clientsocket.connect((localhost, portnumber))
+def connect():
+    """Establishes connection to the server."""
+    client_socket.connect((server_domain, server_port))
+    print("Connected successfully.")
+    threading.Thread(target=listen_for_messages_from_server, args=(client_socket,)).start()
+
+def send_request(data):
+    client_socket.sendall(str(data).encode("utf-8"))
+    response = client_socket.recv(1024).decode("utf-8")
+    return response
+
+def password_check(passwd):
+    """Checks the strength of the password."""
+    SpecialSym = ['$', '@', '#', '%']
+    if len(passwd) < 6:
+        print('Length should be at least 6.')
+        return False
+    if not any(char.isdigit() for char in passwd):
+        print('Password should have at least one numeral.')
+        return False
+    if not any(char.isupper() for char in passwd):
+        print('Password should have at least one uppercase letter.')
+        return False
+    if not any(char.islower() for char in passwd):
+        print('Password should have at least one lowercase letter.')
+        return False
+    if not any(char in SpecialSym for char in passwd):
+        print('Password should have at least one of the symbols $@#.')
+        return False
+    return True
 
 def register():
-    name= input ("Enter name: ")
-    email= input("Enter email: ")
-    address= input("Enter address: ")
-    username=input ("Enter username: ")
-    password= input("Enter password: ")
-    data1= {
-        "action":"register",
+    """Function for user registration."""
+    name = input("Enter name: ")
+    email = input("Enter email: ")
+    if '@' not in email or '.' not in email.split('@')[-1]:
+        print("Invalid email format.")
+        return
+    address=input("Enter your address: ")
+    username = input("Enter username: ")
+    password = input("Enter your password (at least 6 characters, at least one numeral, "
+                     "one uppercase letter, one lowercase letter, and one of the symbols $@#): ")
+
+    if not password_check(password):
+        return
+
+    try:
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    except Exception as e:
+        print(f"Error in hashing password: {e}")
+        return
+    
+    data = {
+        "action": "register",
         "name": name,
         "email": email,
         "address":address,
         "username": username,
-        "password": password
+        "password": password_hash.decode()  # Store the hash as a string
     }
-    clientsocket.sendall(json.dumps(data1).encode("utf-8"))
-    response=clientsocket.recv(1024).decode()
-    print(response)
     
+    response = send_request(data)
+    print(response)
+
 def login():
-    username = input("enter username: ")
-    password= input("enter password: ")
-    data2= {
-        "action":"login",
+    """Function for user login."""
+    username = input("Enter your username: ")
+    password = input("Enter your password: ")
+    
+    data = {
+        "action": "login",
         "username": username,
         "password": password
     }
-    clientsocket.sendall(json.dumps(data2).encode("utf-8"))
-    response=clientsocket.recv(1024).decode()
-    print(response)
     
-        
-def viewproducts():
-    data = {"action": "viewbuyers"}
-    clientsocket.sendall(json.dumps(data).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
-    products = json.loads(response)
-    print("Available products: ")
+    client_socket.sendall(str(data).encode())
+    response = client_socket.recv(2048).decode()
+    
+    if response == "Authentication successful":
+        print("Welcome!")
+        view_products()  # Display products after successful login
+    else:
+        print(response)
+
+def view_products():
+    """Function to request and view products from the server."""
+    data = {"action": "VIEW_PRODUCTS"}
+    response = send_request(data)
+    
+    products = response.get("products", [])
+    
+    # Create a PrettyTable to display the products
+    table = PrettyTable()
+    table.field_names = ["Name", "Price (in $)", "Owner", "Description"]
+    
     for product in products:
-        print(f"Name: {product['name']}, Price: {product['price']}, Description: {product['description']}")
-
-def addproduct():
-    name=input("Enter product name: ")
-    description=input("Enter product description: ")
-    price=input("Enter product price: ")
-
-    data3 = {
-        'action':'addproduct',
-        'name':name,
-        'description':description,
-        'price':price
-    }
-    clientsocket.send(json.dumps(data3).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
-    print(response)
-   
-def checkownerstatus():
-    ownername=input("enter owner name: ")
-    data4 ={
-        'action':'checkownerstatus',
-        'ownername':ownername
-    }
-    clientsocket.send(json.dumps(data4).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
-    print(response)
-
-clientsocket.close()
-
-def buyproduct():
-    productname=input("Enter the product name you want to buy: ")
-    data5={
-        "action":"buyproduct",
-        "productname":productname
-        }
-    clientsocket.send(json.dumps(data5).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
-    print(response)
+        table.add_row([product['name'], product['price'], product['owner'], product['description']])
     
-def sendmessage():
-    recipient=input("Enter the recipient's username: ")
-    message=input("Enter the message: ")
-    data6={
-        "action":"sendingmessage",
-        "recipient":recipient,
-        "message:":message
-        }
-        
-    clientsocket.send(json.dumps(data6).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
-    print(response)
+    print("Products for sale:")
+    print(table)
+
+def view_products_by_owner():
+    """Function to view products by a specific owner."""
+    owner = input("Enter the owner's username to view their products: ")
+    data = {"action": "VIEW_PRODUCTS_BY_OWNER", "owner": owner}
     
-def online():
-    ownername=input("Enter the owner's username to check if they are online: ")
-    data7={
-        "action": "checkownerstatus",
-        "ownername": ownername
+    response = send_request(data)
+    products = response.get("products", [])
+    
+    table = PrettyTable()
+    table.field_names = ["Product Name", "Price (in $)", "Description"]
+    
+    for product in products:
+        table.add_row([product['name'], product['price'], product['description']])
+    
+    print(f"Products from {owner}:")
+    print(table)
+
+def check_owner_status():
+    """Function to check the online status of a product owner."""
+    owner = input("Enter the owner's username to check their online status: ")
+    data = {"action": "CHECK_OWNER_STATUS", "owner": owner}
+    response = send_request(data)
+    print(response["message"])
+
+def send_message():
+    """Function to send a message to the product owner."""
+    message = input("Enter your message: ")
+    if message:
+        client_socket.sendall(message.encode())
+    else:
+        print("Message cannot be empty.")
+
+def buy_product():
+    """Function to buy a product."""
+    product_name = input("Enter the product name to buy: ")
+    data = {"action": "BUY_PRODUCT", "product_name": product_name}
+    response = send_request(data)
+    print(response["message"])
+
+def add_product():
+    """Function to add a new product to the marketplace."""
+    name = input("Enter product name: ")
+    description = input("Enter product description: ")
+    price = float(input("Enter product price: "))
+    image_path = input("Enter image path: ")
+    
+    if os.path.isfile(image_path):
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+            image_base64 = base64.b64encode(image_data).decode()
+    else:
+        print("Image file does not exist.")
+        return
+    
+    data = {
+        "action": "ADD_PRODUCT",
+        "name": name,
+        "description": description,
+        "price": price,
+        "image": image_base64  # Include image data
     }
-    clientsocket.send(json.dumps(data7).encode("utf-8"))
-    response = clientsocket.recv(1024).decode()
+    
+    response = send_request(data)
+    print(response["message"])
+
+def view_buyers():
+    """Function to view buyers of the user's products."""
+    username = input("Enter your username to view buyers: ")
+    data = {"action": "VIEW_BUYERS", "username": username}
+    response = send_request(data)
+    
+    buyers = response.get("buyers", [])
+    if buyers:
+        print("Buyers of your products:")
+        for buyer in buyers:
+            print(buyer)
+    else:
+        print("No buyers found.")
+
+def add_message(message):
+    """Function to handle incoming messages from the server."""
+    print(message)  
+
+def listen_for_messages_from_server(client):
+    """Listening for incoming messages from the server."""
+    while True:
+        try:
+            message = client.recv(2048).decode('utf-8')
+            if message:
+                add_message(message)
+            else:
+                print("The message received from the server is empty.")
+                break
+        except Exception as e:
+            print(f"Error receiving message: {e}")
+            break
+
+def logout():
+    """Function to log out the user from the application."""
+    client_socket.sendall("LOGOUT".encode('utf-8'))
+    response = client_socket.recv(1024).decode('utf-8')
+    client_socket.close()
     print(response)
 
 def main():
+    connect()
     while True:
-        action = input("Do you want to register (r), login (l), or exit (e)? ").lower()
-        if action == 'r':
+        choice = input("\nChoose: [r]egister, [l]ogin, [q]uit: ").lower()
+        if choice == 'r':
             register()
-        elif action == 'l':
-            if login():
-                while True:
-                    option = input("Options: view products (v), add product (a), buy product (b), send message (m), check owner status (c), or logout (o): ").lower()
-                    if option == 'v':
-                        viewproducts()
-                    elif option == 'a':
-                        addproduct()
-                    elif option == 'b':
-                        buyproduct()
-                    elif option == 'm':
-                        sendmessage()
-                    elif option == 'c':
-                        online()
-                    elif option == 'o':
-                        print("Logging out...")
-                        break
-                    else:
-                        print("Invalid option. Please try again.")
-        elif action=='e':
-            print("Exiting...")
+        elif choice == 'l':
+            login()
+            while True:
+                option = input("\nOptions: [v]iew products, [o]wner products, [c]heck owner, [m]essage, [b]uy, [a]dd product, [b]uyers, [q]uit: ").lower()
+                if option == 'v':
+                    view_products()
+                elif option == 'o':
+                    view_products_by_owner()
+                elif option == 'c':
+                    check_owner_status()
+                elif option == 'm':
+                    send_message()
+                elif option == 'b':
+                    buy_product()
+                elif option == 'a':
+                    add_product()
+                elif option == 'y':
+                    view_buyers()  # View buyers of the user's products
+                elif option == 'q':
+                    logout()
+                    break
+        elif choice == 'q':
             break
         else:
-            print("Invalid input. Please try again.")
-    clientsocket.close()
+            print("Invalid option. Please try again.")
+    
+    client_socket.close()
 
 if __name__ == "__main__":
     main()
-
-clientsocket.close()
-
