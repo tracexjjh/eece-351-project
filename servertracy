@@ -1,174 +1,160 @@
-
-import socket 
-import sqlite3
+import socket
 import threading
+import sqlite3
+import json
+import bcrypt
+import sys
 
-server_domain = '127.0.0.1' 
-server_port = 9091
-server_socket = socket.socket(socket.AF_INET , socket.SOCK_STREAM) 
-server_socket.bind((server_domain, server_port))
+# Database setup
+def get_db_connection():
+    db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
+    cursor = db.cursor()
+    return db, cursor
 
-server_socket.listen() 
-print(f"Server is operating on {server_domain} : {server_port}")
+def create_tables():
+    db, cursor = get_db_connection()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            address TEXT NOT NULL,
+            password TEXT NOT NULL
+        )
+    """)
+    db.commit()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            name TEXT PRIMARY KEY,
+            description TEXT,
+            price REAL,
+            owner TEXT NOT NULL,
+            buyer TEXT,
+            FOREIGN KEY (owner) REFERENCES users(username)
+        )
+    """)
+    db.commit()
 
-while True : 
-    client_socket,client_address = server_socket.accept() 
-    print(f"Connection from {client_address}")
+create_tables()
+online_users = {}
 
-db = sqlite3.connect('auboutique.db',checksamethread=False) 
-cursor = db.cursor()
+def handle_client(conn, addr):
+    print(f"New connection from {addr}")
+    conn_db, cursor = get_db_connection()
 
-cursor.execute("CREATE TABLE IF NOT EXISTS user_info (name TEXT NOT NULL, email TEXT NOT NULL, address TEXT NOT NULL, username TEXT PRIMARY KEY NOT NULL UNIQUE, password TEXT NOT NULL)")
-cursor.execute("CREATE TABLE IF NOT EXISTS product_info (username TEXT NOT NULL, name TEXT NOT NULL, picture BLOB NOT NULL, price REAL NOT NULL, description TEXT NOT NULL, buyer TEXT NULL, PRIMARY KEY(username, name))")
-db.commit()
+    def send_response(response):
+        conn.send(json.dumps(response).encode('utf-8'))
 
-def registration(data,conn):
-    name = input("Enter name: ")
-    email = input("Enter email: ")
-    address = input("Enter address: ")
-    
-    checker = False
-    while not checker:
-        username = input("Enter username: ")
-        cursor.execute("SELECT 1 FROM user_info WHERE username = ?", (username,))
-        if cursor.fetchone() is None:
-            checker = True
-        else:
-            print("Username already exists. Please try a different one.")
-    password = input("Enter password: ")
-    try:
-        cursor.execute("INSERT INTO user_info VALUES (?, ?, ?, ?, ?)", 
-                       (name, email, address, username, password))
-        db.commit()
-        print("Registration successful!")
-    except sqlite3.Error as e:
-        print(f"An error occurred: {e}")
-        db.rollback()
-    
-def login():
-    checker = False
-    while not checker:
-        username = input("Enter username: ")
-        cursor.execute("SELECT 1 FROM user_info WHERE username = ?", (username,))
-        if cursor.fetchone() is None:  # If no result, username does not exist
-            print("Username does not exist. Please try again.")
-        else:
-            checker = True
-            anotherchecker = False
-            while not anotherchecker:
-                password = input("Enter password: ")
-                cursor.execute("SELECT 1 FROM user_info WHERE username = ? AND password = ?", (username, password))
-                if cursor.fetchone() is None:  # If no result, password does not match username
-                    print("Password does not match username. Try again.")
-                else:
-                    anotherchecker = True
-                    print("Logged in successfully!")
-                    
-def listproducts():
-    cursor.execute("SELECT * FROM product_info WHERE buyer IS NULL")
-    products=cursor.fetchall()
-    print ("Available products:")
-    for product in products:
-        print(f"Name: {product[1]}, Price: {product[3]}, Description: {product[4]}")
-    
-def selectproducts():
-    productsselected=[]
-    name=input("Enter the product name you wish to buy: ")
-    buyername=input("Enter your username: ")
-    cursor.execute("SELECT * FROM product_info WHERE name=? AND BUYER IS NULL",(name,))
-    product=cursor.fetchone()
-    if product:
-        productsselected.append(product)
-        confirmationmessage="Congratulations on your purchase. Please collect it from the AUB Post Office in three days"
-        print(confirmationmessage)
-        cursor.execute("UPDATE product_info SET buyer=? WHERE name = ?", (buyername,product[1]))
-        db.commit()
-    else:
-        print("Product is not available, please choose another one")
-        
-def addproducts():
-    username=input("Enter your username: ")
-    name=input("Enter product name: ")
-    picture=input("Enter path to the product picture: ")
-    price= float(input("Enter product price: "))
-    description=input("Enter product description: ")
-   
-    try:
-        cursor.execute("INSERT INTO product_info (username, name, picture, price, description) VALUES (?, ?, ?, ?, ?)", 
-                       (username, name, picture, price, description))
-        db.commit()
-        print("Product added successfully!")
-    except sqlite3.Error as e:
-        print(f"An error occurred: {e}")
-        db.rollback()
-        
-def getseller(username):
-    cursor.execute("SELECT name, buyer FROM product_info WHERE username=?", (username,))
-    results=cursor.fetchall()
-    return results
+    username = None  # To store the logged-in username
 
-def getusername(conn):
-    credentials = conn.recv(1024).decode("utf-8")
-    action, username, password = credentials.split(":")
-    if action == "login":
-        cursor.execute("SELECT 1 FROM user_info WHERE username = ? AND password = ?", (username, password))
-        if cursor.fetchone():
-            conn.send("Login successful!".encode("utf-8"))
-            return username 
-        else:
-            conn.send("Login failed.".encode("utf-8"))
-            return None
-    elif action == "register":
+    while True:
         try:
-            cursor.execute("INSERT INTO user_info (name, email, address, username, password) VALUES (?, ?, ?, ?, ?)", 
-                           (username, 'useremail@example.com', 'address', username, password))
-            db.commit()
-            conn.send("Registration successful!".encode("utf-8"))
-            return username  
-        except sqlite3.Error as e:
-            conn.send(f"Registration failed: {e}".encode("utf-8"))
-            return None
-        
-online_users = {}  
-def handleclient(conn, addr):
-    print(f"[NEW CONNECTION] {addr} connected.")
-    connected = True
-    username = getusername(conn)
-    if username is None:
-        conn.close()
-        return
-    online_users[username] = conn
-    while connected:
-        messagelength = conn.recv(64).decode("utf-8") 
-        if messagelength:
-            messagelength = int(messagelength)
-            message = conn.recv(messagelength).decode("utf-8")
-            if message == "!DISCONNECT":
-                connected = False
-            elif message.startswith("MESSAGE:"):
-                _, recipient, actual_message = message.split(":", 2)
-                if recipient in online_users:
-                    recipient_conn = online_users[recipient]
-                    recipient_conn.send(f"Message from {username}: {actual_message}".encode("utf-8"))
+            data = conn.recv(1024).decode('utf-8')
+            if not data:
+                break
+
+            data = json.loads(data)
+            action = data.get('action')
+
+            if action == "REGISTER":
+                username = data['username']
+                cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+                if cursor.fetchone():
+                    send_response({"message": "Username already exists."})
                 else:
-                    conn.send(f"{recipient} is not online.".encode("utf-8"))
-            else:
-                print(f"[{addr}] {message}")
-                conn.send("Msg received".encode("utf-8"))
-    conn.close()
+                    password_hash = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
+                    cursor.execute(
+                        "INSERT INTO users (username, name, email, address, password) VALUES (?, ?, ?, ?, ?)",
+                        (username, data['name'], data['email'], data['address'], password_hash))
+                    conn_db.commit()
+                    send_response({"message": "Registration successful!"})
+
+            elif action == "LOGIN":
+                username = data['username']
+                cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+                result = cursor.fetchone()
+                if result and bcrypt.checkpw(data['password'].encode('utf-8'), result[0]):
+                    online_users[username] = conn
+                    send_response({"message": "Login successful!"})
+                else:
+                    send_response({"message": "Invalid username or password."})
+
+            elif action == "VIEW_PRODUCTS":
+                cursor.execute("SELECT * FROM products WHERE buyer IS NULL")
+                products = cursor.fetchall()
+                product_list = [{"name": p[0], "description": p[1], "price": p[2], "owner": p[3]} for p in products]
+                send_response({"products": product_list})
+
+            elif action == "VIEW_PRODUCTS_BY_OWNER":
+                owner = data['owner']
+                cursor.execute("SELECT * FROM products WHERE owner = ? AND buyer IS NULL", (owner,))
+                products = cursor.fetchall()
+                product_list = [{"name": p[0], "description": p[1], "price": p[2]} for p in products]
+                send_response({"products": product_list})
+
+            elif action == "CHECK_OWNER_STATUS":
+                owner = data['owner']
+                if owner in online_users:
+                    send_response({"message": f"{owner} is online."})
+                else:
+                    send_response({"message": f"{owner} is offline."})
+
+            elif action == "SEND_MESSAGE":
+                recipient = data['recipient']
+                if recipient in online_users:
+                    message = data['message']
+                    recipient_conn = online_users[recipient]
+                    recipient_conn.send(json.dumps({"message": f"Message from {username}: {message}"}).encode('utf-8'))
+                    send_response({"message": "Message sent!"})
+                else:
+                    send_response({"message": f"{recipient} is not online."})
+
+            elif action == "BUY_PRODUCT":
+                product_name = data['product_name']
+                cursor.execute("SELECT * FROM products WHERE name = ? AND buyer IS NULL", (product_name,))
+                product = cursor.fetchone()
+                if product:
+                    cursor.execute("UPDATE products SET buyer = ? WHERE name = ?", (username, product_name))
+                    conn_db.commit()
+                    send_response({"message": f"Product '{product_name}' bought successfully! Please collect your bought products from the AUB Post Office by next week!"})
+                else:
+                    send_response({"message": "Product not available."})
+
+            elif action == "ADD_PRODUCT":
+                name = data['name']
+                description = data['description']
+                price = data['price']
+                owner = username  # Use the logged-in username as the product owner
+                cursor.execute("INSERT INTO products (name, description, price, owner) VALUES (?, ?, ?, ?)",
+                               (name, description, price, owner))
+                conn_db.commit()
+                send_response({"message": "Product added successfully!"})
+
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+
+    # Cleanup on client disconnect
     if username in online_users:
         del online_users[username]
-    print(f"[CONNECTION CLOSED] {addr} disconnected.")
-    
-def start():
+    conn.close()
+    print(f"Connection with {addr} closed.")
+
+def start_server(port):
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(("127.0.0.1", port))
     server_socket.listen()
-    print(f"[LISTENING] Server is listening on {server_socket}:{server_port}")
-    
+    print(f"Server is listening on port {port}")
+
     while True:
         conn, addr = server_socket.accept()
-        thread = threading.Thread(target=handleclient, args=(conn, addr))
+        thread = threading.Thread(target=handle_client, args=(conn, addr))
         thread.start()
-        print(f"[ACTIVE CONNECTIONS] {threading.activeCount() - 1}")
-print("[STARTING] server is starting...")
-start()
-    
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python server.py <port>")
+        sys.exit(1)
+
+    port_number = int(sys.argv[1])
+    start_server(port_number)
