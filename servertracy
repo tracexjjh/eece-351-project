@@ -192,6 +192,35 @@ def check_owner_status(conn, command_data):
         response = {"message": f"{owner} is offline."}
     
     conn.sendall(json.dumps(response).encode("utf-8"))
+def receive_messages(conn):
+    while True:
+        try:
+            message = conn.recv(1024).decode()
+            if not message:
+                break  # Exit if no message is received
+            chat_message = json.loads(message)
+            print(f"{chat_message['from']}: {chat_message['message']}")
+        except:
+            print("Connection lost.")
+            break
+
+def chat_with_owner(owner):
+    print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
+    
+    # Start a thread to receive messages
+    threading.Thread(target=receive_messages, args=(client_socket,), daemon=True).start()
+    
+    while True:
+        message = input("You: ")
+        if message.lower() == 'exit':
+            break
+        data = {
+            "action": "chat",
+            "owner": owner,
+            "message": message
+        }
+        response = send_response(data)
+        print(f"Response from {owner}: {response['response']}")
 
 def handle_client(conn):
     username = None
