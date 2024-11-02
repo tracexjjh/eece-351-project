@@ -1,11 +1,10 @@
 import socket
-import threading
-import sqlite3
-import json
-import bcrypt
 import sys
+import sqlite3
+import bcrypt
+import json
+import threading
 
-# Database setup
 def get_db_connection():
     db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
     cursor = db.cursor()
@@ -26,8 +25,9 @@ def create_tables():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             name TEXT PRIMARY KEY,
-            description TEXT,
+            picture BLOB,
             price REAL,
+            description TEXT,
             owner TEXT NOT NULL,
             buyer TEXT,
             FOREIGN KEY (owner) REFERENCES users(username)
@@ -35,126 +35,191 @@ def create_tables():
     """)
     db.commit()
 
-create_tables()
 online_users = {}
 
-def handle_client(conn, addr):
-    print(f"New connection from {addr}")
-    conn_db, cursor = get_db_connection()
+def send_response(conn, response):
+    conn.sendall(json.dumps(response).encode("utf-8"))
 
-    def send_response(response):
-        conn.send(json.dumps(response).encode('utf-8'))
+def register(conn, user_data):
+    db, cursor = get_db_connection()
+    username = user_data['username']
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    if cursor.fetchone():
+        send_response(conn, {"message": "Username already exists."})
+    else:
+        password_hash = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt())
+        cursor.execute("INSERT INTO users (username, name, email, address, password) VALUES (?, ?, ?, ?, ?)",
+                       (username, user_data['name'], user_data['email'], user_data['address'], password_hash))
+        db.commit()
+        send_response(conn, {"message": "Registration successful!"})
 
-    username = None  # To store the logged-in username
+def login(conn):
+    tries = 0
+    db, cursor = get_db_connection()
 
+    while tries < 3:
+        message = conn.recv(1024).decode()
+        if not message:
+            break  # Exit if no message is received
+
+        command_data = json.loads(message)  # Load the incoming JSON data
+        username = command_data["username"]
+        password = command_data["password"]
+
+        cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+
+        if result and bcrypt.checkpw(password.encode('utf-8'), result[0]):
+            print(f"User {username} logged in.")
+            cursor.execute("SELECT name, description, price, owner FROM products")
+            products = cursor.fetchall()
+            product_list = [{"name": row[0], "description": row[1], "price": row[2], "owner": row[3]} for row in products]
+            response = {
+                "response": "Logged in successfully!",
+                "products": product_list
+            }
+            send_response(conn, response)
+            return username  # Return the username on successful login
+        else:
+            response = {"response": "Wrong Username Or Password"}
+            send_response(conn, response)
+            print("Wrong Username Or Password")
+            tries += 1
+
+    response = {"response": "You failed the login too many times. You are blocked."}
+    send_response(conn, response)
+    print("User blocked after too many failed attempts")
+    conn.close()  # Close the connection
+
+def view_products(conn, command_data):
+    owner = command_data['owner']
+    db, cursor = get_db_connection()
+    cursor.execute("""
+        SELECT name, price, description 
+        FROM products 
+        WHERE owner = ? AND buyer IS NULL
+    """, (owner,))
+    
+    products = cursor.fetchall()  
+    product_list = [{"name": product[0], "price": product[1], "description": product[2]} for product in products]
+    response = {"response": "Products fetched successfully", "products": product_list}
+    conn.sendall(json.dumps(response).encode("utf-8"))
+    db.close()
+
+def view_products_by_owner(conn, owner):
+    db, cursor = get_db_connection()
+    cursor.execute("""
+        SELECT name, price, description 
+        FROM products 
+        WHERE owner = ? AND buyer IS NULL
+    """, (owner,))
+    
+    products = cursor.fetchall()  
+    product_list = [{"name": product[0], "price": product[1], "description": product[2]} for product in products]
+    response = {"response": "Products fetched successfully", "products": product_list}
+    send_response(conn, response)
+    db.close()
+
+def add_product(conn, product_data):
+    db, cursor = get_db_connection()
+    try:
+        cursor.execute("""
+            INSERT INTO products (name, description, price, owner, buyer) 
+            VALUES (?, ?, ?, ?, NULL)
+        """, (product_data['name'], product_data['description'], product_data['price'], product_data['owner']))
+        db.commit()
+        response = {"message": "Product added successfully!"}
+    except sqlite3.IntegrityError:
+        response = {"message": "Product already exists."}
+    except Exception as e:
+        response = {"message": f"An error occurred: {str(e)}"}
+    finally:
+        send_response(conn, response)
+        db.close()
+
+def buy_product(conn, username, product_name):
+    db, cursor = get_db_connection()
+    cursor.execute("SELECT * FROM products WHERE name = ? AND buyer IS NULL", (product_name,))
+    product = cursor.fetchone()
+    if product:
+        cursor.execute("UPDATE products SET buyer = ? WHERE name = ?", (username, product_name))
+        db.commit()
+        send_response(conn, {"message": f"Product '{product_name}' bought successfully! Please collect your bought products from the AUB Post Office by next week!"})
+    else:
+        send_response(conn, {"message": "Product not available."})
+    db.close()
+
+def initiate_chat(conn, command_data):
+    owner = command_data["owner"]
+    message = command_data["message"]
+
+    if owner in online_users:
+        owner_conn = online_users[owner]
+        chat_message = {"from": command_data["username"], "message": message}
+        owner_conn.sendall(json.dumps(chat_message).encode("utf-8"))
+        response = {"response": "Message sent."}
+    else:
+        response = {"response": f"{owner} is not online."}
+    
+    send_response(conn, response)
+    
+def check_owner_status(conn, command_data):
+    owner = command_data['owner']  # Get the owner from the command_data
+    if owner in online_users:
+        response = {"message": f"{owner} is online."}
+    else:
+        response = {"message": f"{owner} is offline."}
+    
+    conn.sendall(json.dumps(response).encode("utf-8"))
+
+def handle_client(conn):
+    username = None
     while True:
-        try:
-            data = conn.recv(1024).decode('utf-8')
-            if not data:
-                break
+        message = conn.recv(1024).decode()
+        if not message:
+            break  # Exit if no message is received
 
-            data = json.loads(data)
-            action = data.get('action')
+        command_data = json.loads(message)  # Load the incoming JSON data
+        action = command_data.get("action")
 
-            if action == "REGISTER":
-                username = data['username']
-                cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-                if cursor.fetchone():
-                    send_response({"message": "Username already exists."})
-                else:
-                    password_hash = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
-                    cursor.execute(
-                        "INSERT INTO users (username, name, email, address, password) VALUES (?, ?, ?, ?, ?)",
-                        (username, data['name'], data['email'], data['address'], password_hash))
-                    conn_db.commit()
-                    send_response({"message": "Registration successful!"})
-
-            elif action == "LOGIN":
-                username = data['username']
-                cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
-                result = cursor.fetchone()
-                if result and bcrypt.checkpw(data['password'].encode('utf-8'), result[0]):
-                    online_users[username] = conn
-                    send_response({"message": "Login successful!"})
-                else:
-                    send_response({"message": "Invalid username or password."})
-
-            elif action == "VIEW_PRODUCTS":
-                cursor.execute("SELECT * FROM products WHERE buyer IS NULL")
-                products = cursor.fetchall()
-                product_list = [{"name": p[0], "description": p[1], "price": p[2], "owner": p[3]} for p in products]
-                send_response({"products": product_list})
-
-            elif action == "VIEW_PRODUCTS_BY_OWNER":
-                owner = data['owner']
-                cursor.execute("SELECT * FROM products WHERE owner = ? AND buyer IS NULL", (owner,))
-                products = cursor.fetchall()
-                product_list = [{"name": p[0], "description": p[1], "price": p[2]} for p in products]
-                send_response({"products": product_list})
-
-            elif action == "CHECK_OWNER_STATUS":
-                owner = data['owner']
-                if owner in online_users:
-                    send_response({"message": f"{owner} is online."})
-                else:
-                    send_response({"message": f"{owner} is offline."})
-
-            elif action == "SEND_MESSAGE":
-                recipient = data['recipient']
-                if recipient in online_users:
-                    message = data['message']
-                    recipient_conn = online_users[recipient]
-                    recipient_conn.send(json.dumps({"message": f"Message from {username}: {message}"}).encode('utf-8'))
-                    send_response({"message": "Message sent!"})
-                else:
-                    send_response({"message": f"{recipient} is not online."})
-
-            elif action == "BUY_PRODUCT":
-                product_name = data['product_name']
-                cursor.execute("SELECT * FROM products WHERE name = ? AND buyer IS NULL", (product_name,))
-                product = cursor.fetchone()
-                if product:
-                    cursor.execute("UPDATE products SET buyer = ? WHERE name = ?", (username, product_name))
-                    conn_db.commit()
-                    send_response({"message": f"Product '{product_name}' bought successfully! Please collect your bought products from the AUB Post Office by next week!"})
-                else:
-                    send_response({"message": "Product not available."})
-
-            elif action == "ADD_PRODUCT":
-                name = data['name']
-                description = data['description']
-                price = data['price']
-                owner = username  # Use the logged-in username as the product owner
-                cursor.execute("INSERT INTO products (name, description, price, owner) VALUES (?, ?, ?, ?)",
-                               (name, description, price, owner))
-                conn_db.commit()
-                send_response({"message": "Product added successfully!"})
-
-        except Exception as e:
-            print(f"Error: {e}")
-            break
+        if action == "register":
+            register(conn, command_data)
+        elif action == "login":
+            username = login(conn)  # Assume login returns the username on success
+            if username:
+                online_users[username] = conn  # Add user to online users
+        elif action == "check_online":
+            check_owner_status(conn, command_data["owner"])
+        elif action == "initiate_chat":
+            initiate_chat(conn, command_data)
+        elif action == "buy_product":
+            buy_product(conn, username, command_data["product_name"])
+        elif action == "view_products_by_owner":
+            view_products_by_owner(conn, command_data["owner"])
 
     # Cleanup on client disconnect
     if username in online_users:
         del online_users[username]
+        print(f"Connection closed for {username}.")
     conn.close()
-    print(f"Connection with {addr} closed.")
-
-def start_server(port):
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(("127.0.0.1", port))
-    server_socket.listen()
-    print(f"Server is listening on port {port}")
-
-    while True:
-        conn, addr = server_socket.accept()
-        thread = threading.Thread(target=handle_client, args=(conn, addr))
-        thread.start()
 
 if __name__ == "__main__":
+    create_tables()
     if len(sys.argv) != 2:
         print("Usage: python server.py <port>")
         sys.exit(1)
-
-    port_number = int(sys.argv[1])
-    start_server(port_number)
+    
+    port = int(sys.argv[1])
+    host = '127.0.0.1'
+    
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((host, port))
+    server.listen()
+    print(f"Server listening on {host}:{port}")
+    
+    while True:
+        client_socket, client_address = server.accept()
+        print(f"Connection accepted from {client_address}")
+        client_thread = threading.Thread(target=handle_client, args=(client_socket,))
+        client_thread.start()
+        
