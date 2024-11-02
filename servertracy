@@ -5,6 +5,8 @@ import bcrypt
 import json
 import threading
 
+from prettytable import PrettyTable
+
 def get_db_connection():
     db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
     cursor = db.cursor()
@@ -71,15 +73,7 @@ def login(conn):
 
         if result and bcrypt.checkpw(password.encode('utf-8'), result[0]):
             print(f"User {username} logged in.")
-            cursor.execute("SELECT name, description, price, owner FROM products")
-            products = cursor.fetchall()
-            product_list = [{"name": row[0], "description": row[1], "price": row[2], "owner": row[3]} for row in products]
-            response = {
-                "response": "Logged in successfully!",
-                "products": product_list
-            }
-            send_response(conn, response)
-            return username  # Return the username on successful login
+            view_products 
         else:
             response = {"response": "Wrong Username Or Password"}
             send_response(conn, response)
@@ -91,31 +85,29 @@ def login(conn):
     print("User blocked after too many failed attempts")
     conn.close()  # Close the connection
 
-def view_products(conn, command_data):
-    owner = command_data['owner']
-    db, cursor = get_db_connection()
-    cursor.execute("""
-        SELECT name, price, description 
-        FROM products 
-        WHERE owner = ? AND buyer IS NULL
-    """, (owner,))
+def view_products(connection):
+    cursor = connection.cursor()
+    query = "SELECT name, description, picture, price, owner FROM products WHERE buyer IS NULL"
+    cursor.execute(query)
+    products = cursor.fetchall()
     
-    products = cursor.fetchall()  
-    product_list = [{"name": product[0], "price": product[1], "description": product[2]} for product in products]
-    response = {"response": "Products fetched successfully", "products": product_list}
-    conn.sendall(json.dumps(response).encode("utf-8"))
-    db.close()
+    table = PrettyTable()
+    table.field_names = ["Name", "Description", "Picture", "Price", "Owner"]
+    for product in products:
+        table.add_row(product)
+    
+    print(table)
 
 def view_products_by_owner(conn, owner):
     db, cursor = get_db_connection()
     cursor.execute("""
-        SELECT name, price, description 
+        SELECT name, price, description, picture
         FROM products 
         WHERE owner = ? AND buyer IS NULL
     """, (owner,))
     
     products = cursor.fetchall()  
-    product_list = [{"name": product[0], "price": product[1], "description": product[2]} for product in products]
+    product_list = [{"name": product[0], "price": product[1], "description": product[2],"picture": product[3]} for product in products]
     response = {"response": "Products fetched successfully", "products": product_list}
     send_response(conn, response)
     db.close()
@@ -124,9 +116,9 @@ def add_product(conn, product_data):
     db, cursor = get_db_connection()
     try:
         cursor.execute("""
-            INSERT INTO products (name, description, price, owner, buyer) 
-            VALUES (?, ?, ?, ?, NULL)
-        """, (product_data['name'], product_data['description'], product_data['price'], product_data['owner']))
+            INSERT INTO products (name, description, price, picture,owner, buyer) 
+            VALUES (?, ?, ?, ?, ?, NULL)
+        """, (product_data['name'], product_data['description'], product_data['price'], product_data['picture'], product_data['owner']))
         db.commit()
         response = {"message": "Product added successfully!"}
     except sqlite3.IntegrityError:
@@ -148,27 +140,14 @@ def buy_product(conn, username, product_name):
     else:
         send_response(conn, {"message": "Product not available."})
     db.close()
-
-def mark_product_as_bought(connection, product_id, buyer_username):
-    cursor = connection.cursor()
-    query = """
-    UPDATE products 
-    SET buyer = ? 
-    WHERE name = ? AND buyer IS NULL
-    """
-    data = (buyer_username, product_id)
     
-    try:
-        cursor.execute(query, data)
-        if cursor.rowcount == 0:
-            response = "Error: Product not available or already bought."
-        else:
-            connection.commit()
-            response = f"Success: Product '{product_id}' bought successfully!"
-    except Exception as e:
-        response = f"Error: Failed to mark product as bought. {str(e)}"
-    
-    return response  # Return plain text response
+def check_owner_status(conn, command_data):
+    owner = command_data['owner']  # Get the owner from the command_data
+    if owner in online_users:
+        response = {"message": f"{owner} is online."}
+    else:
+        response = {"message": f"{owner} is offline."}
+    send_response(conn,response)
 
 def initiate_chat(conn, command_data):
     owner = command_data["owner"]
@@ -182,16 +161,8 @@ def initiate_chat(conn, command_data):
     else:
         response = {"response": f"{owner} is not online."}
     
-    send_response(conn, response)
+    send_response(conn, response)  
     
-def check_owner_status(conn, command_data):
-    owner = command_data['owner']  # Get the owner from the command_data
-    if owner in online_users:
-        response = {"message": f"{owner} is online."}
-    else:
-        response = {"message": f"{owner} is offline."}
-    
-    conn.sendall(json.dumps(response).encode("utf-8"))
 def receive_messages(conn):
     while True:
         try:
@@ -206,8 +177,6 @@ def receive_messages(conn):
 
 def chat_with_owner(owner):
     print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
-    
-    # Start a thread to receive messages
     threading.Thread(target=receive_messages, args=(client_socket,), daemon=True).start()
     
     while True:
@@ -224,34 +193,37 @@ def chat_with_owner(owner):
 
 def handle_client(conn):
     username = None
-    while True:
-        message = conn.recv(1024).decode()
-        if not message:
-            break  # Exit if no message is received
+    try:
+        while True:
+            message = conn.recv(1024).decode()
+            if not message:
+                break  # Exit if no message is received
+    
+            command_data = json.loads(message)  # Load the incoming JSON data
+            action = command_data.get("action")
+    
+            if action == "register":
+                register(conn, command_data)
+            elif action == "login":
+                username = login(conn)  # Assume login returns the username on success
+                if username:
+                    online_users[username] = conn  # Add user to online users
+            elif action == "check_online":
+                check_owner_status(conn, command_data)
+            elif action == "initiate_chat":
+                initiate_chat(conn, command_data)
+            elif action == "buy_product":
+                buy_product(conn, username, command_data)
+            elif action=="add_product":
+                add_product(conn,command_data)
+            elif action == "view_products_by_owner":
+                view_products_by_owner(conn, command_data)
 
-        command_data = json.loads(message)  # Load the incoming JSON data
-        action = command_data.get("action")
-
-        if action == "register":
-            register(conn, command_data)
-        elif action == "login":
-            username = login(conn)  # Assume login returns the username on success
-            if username:
-                online_users[username] = conn  # Add user to online users
-        elif action == "check_online":
-            check_owner_status(conn, command_data["owner"])
-        elif action == "initiate_chat":
-            initiate_chat(conn, command_data)
-        elif action == "buy_product":
-            buy_product(conn, username, command_data["product_name"])
-        elif action == "view_products_by_owner":
-            view_products_by_owner(conn, command_data["owner"])
-
-    # Cleanup on client disconnect
-    if username in online_users:
-        del online_users[username]
-        print(f"Connection closed for {username}.")
-    conn.close()
+    finally:
+        if username in online_users:
+            del online_users[username]
+            print(f"Connection closed for {username}.")
+        conn.close()
 
 if __name__ == "__main__":
     create_tables()
@@ -272,4 +244,4 @@ if __name__ == "__main__":
         print(f"Connection accepted from {client_address}")
         client_thread = threading.Thread(target=handle_client, args=(client_socket,))
         client_thread.start()
-        
+  
