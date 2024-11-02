@@ -149,6 +149,27 @@ def buy_product(conn, username, product_name):
         send_response(conn, {"message": "Product not available."})
     db.close()
 
+def mark_product_as_bought(connection, product_id, buyer_username):
+    cursor = connection.cursor()
+    query = """
+    UPDATE products 
+    SET buyer = ? 
+    WHERE name = ? AND buyer IS NULL
+    """
+    data = (buyer_username, product_id)
+    
+    try:
+        cursor.execute(query, data)
+        if cursor.rowcount == 0:
+            response = "Error: Product not available or already bought."
+        else:
+            connection.commit()
+            response = f"Success: Product '{product_id}' bought successfully!"
+    except Exception as e:
+        response = f"Error: Failed to mark product as bought. {str(e)}"
+    
+    return response  # Return plain text response
+
 def initiate_chat(conn, command_data):
     owner = command_data["owner"]
     message = command_data["message"]
