@@ -5,15 +5,13 @@ import bcrypt
 import json
 import threading
 
-from prettytable import PrettyTable
-
 def get_db_connection():
     try:
         db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
         cursor = db.cursor()
         return db, cursor
     except sqlite3.Error as error:
-        print("Connection error with database:",e)
+        print("Connection error with database:",error)
         return None,None
 
 def create_tables():
@@ -55,7 +53,7 @@ def send_response(conn, response):
     try:
         conn.sendall(json.dumps(response).encode("utf-8"))
     except (ConnectionResetError, BrokenPipeError) as error:
-        print("Error sending the response",e)
+        print("Error sending the response",error)
         conn.close()
 
 def register(conn, user_data):
@@ -64,6 +62,7 @@ def register(conn, user_data):
     cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
     if cursor.fetchone():
         send_response(conn, {"message": "Username already exists."})
+        return
     else:
         password_hash = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt())
         cursor.execute("INSERT INTO users (username, name, email, address, password) VALUES (?, ?, ?, ?, ?)",
@@ -205,7 +204,7 @@ def handle_client(conn):
                 break 
             command_data = json.loads(message)  
             action = command_data.get("action")
-    
+
             if action == "register":
                 register(conn, command_data)
             elif action == "login":
