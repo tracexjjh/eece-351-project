@@ -1,5 +1,4 @@
 import socket
-import sys
 import bcrypt
 import json
 import os
@@ -8,7 +7,7 @@ import threading
 from prettytable import PrettyTable
 
 server_domain = "127.0.0.1"
-server_port = 8787
+server_port = 9871
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -94,12 +93,13 @@ def login():
     response = send_request(data)
     if response.get("response") == "Logged in successfully!":
         print("You are logged in!")
-        display_products(response.get("products", []))
-        homepage()  # Directly go to homepage after login
+        homepage()  
     else:
         print(response.get("response", "Login failed."))
 
 def display_products(products):
+    data = {"action": "view_products"}
+    products=send_request(data)
     if products:
         table = PrettyTable(["Product Name", "Price ($)", "Description", "Image", "Owner"])
         for product in products:
@@ -137,6 +137,7 @@ def check_owner_status():
         print("Error checking owner status.")
 
 def add_product():
+    username=input("enter your username: ")
     name = input("Enter product name: ")
     if not name:
         print("Product name cannot be empty.")
@@ -171,7 +172,8 @@ def add_product():
         "name": name,
         "description": description,
         "price": price,
-        "image": image_base64
+        "image": image_base64,
+        "owner": username,
     }
 
     response = send_request(data)
@@ -237,41 +239,41 @@ def logout():
     client_socket.close()
 
 def homepage():
+    print("\n---- Homepage -----")
     while True:
-        data={"action":"view_products_by_owner", "owner": "any_user"}
+        data={"action":"view_products"}
         response=send_request(data)
-        products=json.loads(response).get("products", [])
-        
-        print("\n---- Homepage -----")
-        if not products:
-            print("No products available. You have to add a product before continuing")
-            print("1. Add a product")
-            choice=input("Choose an option: ")
-            if choice=="1":
-                add_product()
-            else:
-                print("Invalid choice. Please add a product to continue")
-        
+        products=response.get("products", [])
+        if products:
+            display_products(products)
         else:
-            print("1. Product owner online?")
-            print("2. Add a Product")
-            print("3. View Products by Owner")
-            print("5. Select and buy products")
-            print("6. view buyers")
-            print("4. Log Out")
+            print("No products available for sale.")
+            print("You need to add a product before continuing.")
         
-            choice = input("Choose an option: ")
-            if choice=="1":
-                check_owner_status()
-            if choice == "2":
-                add_product()
-            elif choice == "3":
-                view_products_by_owner()
-            elif choice == "4":
-                print("Logging out...")
-                break
-            else:
-                print("Invalid choice. Please try again.")
+        print("1. Add a Product")
+        print("2. View Products by Owner")
+        print("3. Check Owner Online Status")
+        print("4. Buy a Product")
+        print("5. View Buyers")
+        print("6. Log Out")
+
+        choice = input("Choose an option: ")
+        if choice == "1":
+            add_product()
+        elif choice == "2":
+            view_products_by_owner()
+        elif choice == "3":
+            check_owner_status()
+        elif choice == "4":
+            buy_product()
+        elif choice == "5":
+            view_buyers()
+        elif choice == "6":
+            print("Logging out...")
+            logout()
+            break
+        else:
+            print("Invalid choice. Please try again.")
 
 def main():
     connect()
