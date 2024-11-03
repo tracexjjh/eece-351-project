@@ -8,39 +8,55 @@ import threading
 from prettytable import PrettyTable
 
 def get_db_connection():
-    db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
-    cursor = db.cursor()
-    return db, cursor
+    try:
+        db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
+        cursor = db.cursor()
+        return db, cursor
+    except sqlite3.Error as error:
+        print("Connection error with database:",e)
+        return None,None
 
 def create_tables():
     db, cursor = get_db_connection()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            address TEXT NOT NULL,
-            password TEXT NOT NULL
-        )
-    """)
-    db.commit()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            name TEXT PRIMARY KEY,
-            picture BLOB,
-            price REAL,
-            description TEXT,
-            owner TEXT NOT NULL,
-            buyer TEXT,
-            FOREIGN KEY (owner) REFERENCES users(username)
-        )
-    """)
-    db.commit()
+    if db is None or cursor is None:
+        print ("Table creation failed due to database connection error")
+        return 
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                address TEXT NOT NULL,
+                password TEXT NOT NULL
+            )
+        """)
+        db.commit()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                name TEXT PRIMARY KEY,
+                picture BLOB,
+                price REAL,
+                description TEXT,
+                owner TEXT NOT NULL,
+                buyer TEXT,
+                FOREIGN KEY (owner) REFERENCES users(username)
+            )
+        """)
+        db.commit()
+    except sqlite3.Error as error:
+        print ("Error creating the table: ", error)
+    finally:
+        db.close()
 
 online_users = {}
 
 def send_response(conn, response):
-    conn.sendall(json.dumps(response).encode("utf-8"))
+    try:
+        conn.sendall(json.dumps(response).encode("utf-8"))
+    except (ConnectionResetError, BrokenPipeError) as error:
+        print("Error sending the response",e)
+        conn.close()
 
 def register(conn, user_data):
     db, cursor = get_db_connection()
@@ -64,7 +80,12 @@ def login(conn):
         if not message:
             break  # Exit if no message is received
 
-        command_data = json.loads(message)  # Load the incoming JSON data
+        try:
+            command_data = json.loads(message)  # Load the incoming JSON data
+        except json.JSONDecodeError:
+            send_response(conn, {"response": "Invalid JSON format."})
+            continue  # Ask for input again
+
         username = command_data["username"]
         password = command_data["password"]
 
@@ -73,7 +94,8 @@ def login(conn):
 
         if result and bcrypt.checkpw(password.encode('utf-8'), result[0]):
             print(f"User {username} logged in.")
-            view_products 
+            send_response(conn, {"response": "Login successful!"})
+            return username  # Return the username on successful login
         else:
             response = {"response": "Wrong Username Or Password"}
             send_response(conn, response)
@@ -84,19 +106,17 @@ def login(conn):
     send_response(conn, response)
     print("User blocked after too many failed attempts")
     conn.close()  # Close the connection
+    return None  # Return None if login fails
 
 def view_products(connection):
-    cursor = connection.cursor()
-    query = "SELECT name, description, picture, price, owner FROM products WHERE buyer IS NULL"
-    cursor.execute(query)
+    db, cursor = get_db_connection()
+    cursor.execute("SELECT name, picture, price, description, owner FROM products WHERE buyer IS NULL")
     products = cursor.fetchall()
     
-    table = PrettyTable()
-    table.field_names = ["Name", "Description", "Picture", "Price", "Owner"]
-    for product in products:
-        table.add_row(product)
-    
-    print(table)
+    product_list = [{"name": product[0], "picture": product[1], "price": product[2], "description": product[3], "owner": product[4]} for product in products]
+    response = {"response": "Products fetched successfully", "products": product_list}
+    send_response(connection, response)  # Correctly pass the connection
+    db.close()
 
 def view_products_by_owner(conn, owner):
     db, cursor = get_db_connection()
@@ -107,16 +127,16 @@ def view_products_by_owner(conn, owner):
     """, (owner,))
     
     products = cursor.fetchall()  
-    product_list = [{"name": product[0], "price": product[1], "description": product[2],"picture": product[3]} for product in products]
+    product_list = [{"name": product[0], "price": product[1], "description": product[2], "picture": product[3]} for product in products]
     response = {"response": "Products fetched successfully", "products": product_list}
-    send_response(conn, response)
+    send_response(conn, response)  # Correctly send response
     db.close()
 
 def add_product(conn, product_data):
     db, cursor = get_db_connection()
     try:
         cursor.execute("""
-            INSERT INTO products (name, description, price, picture,owner, buyer) 
+            INSERT INTO products (name, description, price, picture, owner, buyer) 
             VALUES (?, ?, ?, ?, ?, NULL)
         """, (product_data['name'], product_data['description'], product_data['price'], product_data['picture'], product_data['owner']))
         db.commit()
@@ -140,14 +160,14 @@ def buy_product(conn, username, product_name):
     else:
         send_response(conn, {"message": "Product not available."})
     db.close()
-    
+
 def check_owner_status(conn, command_data):
-    owner = command_data['owner']  # Get the owner from the command_data
+    owner = command_data['owner']
     if owner in online_users:
         response = {"message": f"{owner} is online."}
     else:
         response = {"message": f"{owner} is offline."}
-    send_response(conn,response)
+    send_response(conn, response)
 
 def initiate_chat(conn, command_data):
     owner = command_data["owner"]
@@ -161,8 +181,8 @@ def initiate_chat(conn, command_data):
     else:
         response = {"response": f"{owner} is not online."}
     
-    send_response(conn, response)  
-    
+    send_response(conn, response)
+
 def receive_messages(conn):
     while True:
         try:
@@ -171,54 +191,37 @@ def receive_messages(conn):
                 break  # Exit if no message is received
             chat_message = json.loads(message)
             print(f"{chat_message['from']}: {chat_message['message']}")
-        except:
-            print("Connection lost.")
-            break
-
-def chat_with_owner(owner):
-    print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
-    threading.Thread(target=receive_messages, args=(client_socket,), daemon=True).start()
+        except Exception as e:
+            print(f"Connection lost. Error: {e}")
+            break  
     
-    while True:
-        message = input("You: ")
-        if message.lower() == 'exit':
-            break
-        data = {
-            "action": "chat",
-            "owner": owner,
-            "message": message
-        }
-        response = send_response(data)
-        print(f"Response from {owner}: {response['response']}")
-
 def handle_client(conn):
     username = None
     try:
         while True:
             message = conn.recv(1024).decode()
             if not message:
-                break  # Exit if no message is received
-    
-            command_data = json.loads(message)  # Load the incoming JSON data
+                print(f'{username} has disconnected.')
+                break 
+            command_data = json.loads(message)  
             action = command_data.get("action")
     
             if action == "register":
                 register(conn, command_data)
             elif action == "login":
-                username = login(conn)  # Assume login returns the username on success
+                username = login(conn)  
                 if username:
-                    online_users[username] = conn  # Add user to online users
+                    online_users[username] = conn 
             elif action == "check_online":
                 check_owner_status(conn, command_data)
             elif action == "initiate_chat":
                 initiate_chat(conn, command_data)
             elif action == "buy_product":
                 buy_product(conn, username, command_data)
-            elif action=="add_product":
-                add_product(conn,command_data)
+            elif action == "add_product":
+                add_product(conn, command_data)
             elif action == "view_products_by_owner":
                 view_products_by_owner(conn, command_data)
-
     finally:
         if username in online_users:
             del online_users[username]
@@ -228,20 +231,15 @@ def handle_client(conn):
 if __name__ == "__main__":
     create_tables()
     if len(sys.argv) != 2:
-        print("Usage: python server.py <port>")
-        sys.exit(1)
-    
-    port = int(sys.argv[1])
-    host = '127.0.0.1'
-    
+       print("Usage: python server.py <port>")
+       sys.exit(1)
+   
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen()
-    print(f"Server listening on {host}:{port}")
+    server.bind(('0.0.0.0', int(sys.argv[1])))
+    server.listen(5)
+    print("Server is listening...")
     
     while True:
-        client_socket, client_address = server.accept()
-        print(f"Connection accepted from {client_address}")
-        client_thread = threading.Thread(target=handle_client, args=(client_socket,))
-        client_thread.start()
-  
+        conn, addr = server.accept()
+        print(f"Connection from {addr} accepted.")
+        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
