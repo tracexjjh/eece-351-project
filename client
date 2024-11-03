@@ -5,15 +5,10 @@ import json
 import os
 import base64
 import threading
-
 from prettytable import PrettyTable
 
-if len(sys.argv) != 2:
-    print("Usage: python client.py <port>")
-    sys.exit(1)
-
 server_domain = "127.0.0.1"
-server_port = int(sys.argv[1]) 
+server_port = 8787
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -23,11 +18,18 @@ def connect():
         print("Connected successfully.")
     except socket.error as e:
         print(f"Connection failed: {e}")
-        
+
 def send_request(data):
-    client_socket.sendall(str(data).encode("utf-8"))
-    response = client_socket.recv(1024).decode("utf-8")
-    return response
+    try:
+        client_socket.sendall(json.dumps(data).encode("utf-8"))
+        response = json.loads(client_socket.recv(1024).decode("utf-8"))
+        return response
+    except json.JSONDecodeError:
+        print("Failed to decode server response.")
+        return {}
+    except Exception as e:
+        print(f"Error during request: {e}")
+        return {}
 
 def password_check(passwd):
     SpecialSym = ['$', '@', '#', '%']
@@ -54,7 +56,7 @@ def register():
     if '@' not in email or '.' not in email.split('@')[-1]:
         print("Invalid email format.")
         return
-    address=input("Enter your address: ")
+    address = input("Enter your address: ")
     username = input("Enter username: ")
     password = input("Enter your password (at least 6 characters, at least one numeral, "
                      "one uppercase letter, one lowercase letter, and one of the symbols $@#): ")
@@ -72,14 +74,14 @@ def register():
         "action": "register",
         "name": name,
         "email": email,
-        "address":address,
+        "address": address,
         "username": username,
         "password": password_hash.decode()
     }
     
     response = send_request(data)
-    print(response["response"])
-    
+    print(response.get("response", "Registration successful."))
+
 def login():
     username = input("Enter username: ")
     password = input("Enter password: ")
@@ -90,9 +92,10 @@ def login():
         "password": password
     }
     response = send_request(data)
-    if response and response.get("response") == "Logged in successfully!":
+    if response.get("response") == "Logged in successfully!":
         print("You are logged in!")
         display_products(response.get("products", []))
+        homepage()  # Directly go to homepage after login
     else:
         print(response.get("response", "Login failed."))
 
@@ -108,42 +111,53 @@ def display_products(products):
 
 def view_products_by_owner():
     owner = input("Enter the owner's username to view their products: ")
-    data = {"action": "VIEW_PRODUCTS_BY_OWNER", "owner": owner}
+    data = {"action": "view_products_by_owner", "owner": owner}
     
     response = send_request(data)
     products = response.get("products", [])
     
-    table = PrettyTable()
-    table.field_names = ["Product Name", "Price (in $)", "Description", "Image","Owner"]
-    
-    for product in products:
-        table.add_row([product['name'], product['price'], product['description'], product['picture'], product['owner']])
-    
-    print(f"Products from {owner}:")
-    print(table)
-#def view_products_by_owner():
-  #  owner = input("Enter the owner's username: ")
-   # response = send_request({"action": "VIEW_PRODUCTS_BY_OWNER", "owner": owner})
-  #  display_products(response.get("products", []))
-    
+    if products:
+        table = PrettyTable()
+        table.field_names = ["Product Name", "Price (in $)", "Description", "Image", "Owner"]
+        for product in products:
+            table.add_row([product['name'], product['price'], product['description'], product['picture'], product['owner']])
+        print(f"Products from {owner}:")
+        print(table)
+    else:
+        print(f"No products found for owner {owner}.")
+
 def check_owner_status():
     owner = input("Enter the owner's username to check their online status: ")
-    data = {"action": "CHECK_OWNER_STATUS", "owner": owner}
+    data = {"action": "check_owner_status", "owner": owner}
     
     response = send_request(data)
-
-    # Optional: Check for success or failure in the response
     if "message" in response:
         print(response["message"])
     else:
         print("Error checking owner status.")
-    
+
 def add_product():
     name = input("Enter product name: ")
+    if not name:
+        print("Product name cannot be empty.")
+        return
+
     description = input("Enter product description: ")
-    price = float(input("Enter product price: "))
+    if not description:
+        print("Product description cannot be empty.")
+        return
+
+    price = input("Enter product price: ")
+    try:
+        price = float(price)
+        if price <= 0:
+            print("Price must be greater than zero.")
+            return
+    except ValueError:
+        print("Invalid price. Please enter a number.")
+        return
+
     image_path = input("Enter image path: ")
-    
     if os.path.isfile(image_path):
         with open(image_path, 'rb') as f:
             image_data = f.read()
@@ -151,31 +165,17 @@ def add_product():
     else:
         print("Image file does not exist.")
         return
-    
+
     data = {
-        "action": "ADD_PRODUCT",
+        "action": "add_product",
         "name": name,
         "description": description,
         "price": price,
         "image": image_base64
     }
-    
+
     response = send_request(data)
-    print(response["message"])
-    
-def chat_with_owner(owner):
-    print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
-    while True:
-        message = input("You: ")
-        if message.lower() == 'exit':
-            break
-        data = {
-            "action": "chat",
-            "owner": owner,
-            "message": message
-        }
-        response = send_request(data)
-        print(f"Response from {owner}: {response['response']}")
+    print(response.get("message", "Succesfully added product."))
 
 def receive_messages():
     while True:
@@ -193,35 +193,33 @@ def receive_messages():
             print(f'An error occurred: {e}')
             break
 
-def send_message():
+def chat_with_owner(owner):
+    print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
+    threading.Thread(target=receive_messages, daemon=True).start()
+    
     while True:
-        recipient = input("Enter recipient username: ")
-        message = input("Enter message: ")
-        data = json.dumps({"action": "chat", "owner": recipient, "message": message})
-        client_socket.send(data.encode('utf-8'))
+        message = input("You: ")
+        if message.lower() == 'exit':
+            break
+        data = {
+            "action": "chat",
+            "owner": owner,
+            "message": message
+        }
+        response = send_request(data)
+        print(f"Response from {owner}: {response.get('response', 'No response.')}")
 
-# Start the threads for receiving and sending messages
-receive_thread = threading.Thread(target=receive_messages, daemon=True)
-receive_thread.start()
 
-send_thread = threading.Thread(target=send_message, daemon=True)
-send_thread.start()
-try:
-    while True:
-        pass  # Or handle other application logic
-except KeyboardInterrupt:
-    print("Exiting chat.")
-    client_socket.close()
-        
+
 def buy_product():
     product_name = input("Enter the product name to buy: ")
-    data = {"action": "BUY_PRODUCT", "product_name": product_name}
+    data = {"action": "buy_product", "product_name": product_name}
     response = send_request(data)
-    print(response["message"])
-    
+    print(response.get("message", "Failed to buy product."))
+
 def view_buyers():
     username = input("Enter your username to view buyers: ")
-    data = {"action": "VIEW_BUYERS", "username": username}
+    data = {"action": "view_buyers", "username": username}
     response = send_request(data)
     
     buyers = response.get("buyers", [])
@@ -233,54 +231,63 @@ def view_buyers():
         print("No buyers found.")
 
 def logout():
-    """Function to log out the user from the application."""
-    client_socket.sendall("LOGOUT".encode('utf-8'))
+    client_socket.sendall(json.dumps({"action": "logout"}).encode('utf-8'))
     response = client_socket.recv(1024).decode('utf-8')
-    client_socket.close()
     print(response)
+    client_socket.close()
 
+def homepage():
+    while True:
+        data={"action":"view_products_by_owner", "owner": "any_user"}
+        response=send_request(data)
+        products=json.loads(response).get("products", [])
+        
+        print("\n---- Homepage -----")
+        if not products:
+            print("No products available. You have to add a product before continuing")
+            print("1. Add a product")
+            choice=input("Choose an option: ")
+            if choice=="1":
+                add_product()
+            else:
+                print("Invalid choice. Please add a product to continue")
+        
+        else:
+            print("1. Product owner online?")
+            print("2. Add a Product")
+            print("3. View Products by Owner")
+            print("5. Select and buy products")
+            print("6. view buyers")
+            print("4. Log Out")
+        
+            choice = input("Choose an option: ")
+            if choice=="1":
+                check_owner_status()
+            if choice == "2":
+                add_product()
+            elif choice == "3":
+                view_products_by_owner()
+            elif choice == "4":
+                print("Logging out...")
+                break
+            else:
+                print("Invalid choice. Please try again.")
 
 def main():
     connect()
     while True:
-        choice = input("\nChoose: [r]egister, [l]ogin ").lower()
+        choice = input("\nChoose: [r]egister, [l]ogin: ").lower()
         if choice == 'r':
             register()
         elif choice == 'l':
             login()
-            homepage()
         else:
-            print("Invalid choice. Please choose [r], [l], or [q].")
-            
+            print("Invalid choice. Please choose [r] or [l].")
+
 if __name__ == "__main__":
-    main()
-    
-def homepage():
-    while True:
-        print("\n--- Homepage ---")
-        print("1. Check product owner online status")
-        print("2. Add a Product")
-        print("3. View Products by Owner")
-        print("4. Buy a Product")
-        print("5. View Buyers")
-        print("6. Log Out")
-
-        choice = input("Choose an option: ")
-
-        if choice == "1":
-            check_owner_status()
-        elif choice == "2":
-            add_product()
-        elif choice == "3":
-            view_products_by_owner()
-        elif choice == "4":
-            buy_product()
-        elif choice == "5":
-            view_buyers()
-        elif choice == "6":
-            print("Logging out...")
-            logout()
-            break
-        else:
-            print("Invalid choice. Please try again.")
-
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Exiting the application.")
+    finally:
+        client_socket.close()
