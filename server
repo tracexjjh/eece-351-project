@@ -3,12 +3,6 @@ import sys
 import sqlite3
 import bcrypt
 import json
-import threading
-from datetime import datetime, timedelta
-
-# Initialize database connection
-def get_db_connection():
-    try:
         db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
         cursor = db.cursor()
         return db, cursor
