@@ -1,168 +1,215 @@
 import socket
+import bcrypt
 import json
 import os
 import base64
 import threading
-import time
 from prettytable import PrettyTable
 
 server_domain = "127.0.0.1"
-server_port = 6421
+server_port = 8080
+
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+registered_emails =[]
+registered_users = {}
+
+client_socket = None
+
 def connect():
+    global client_socket
+    if client_socket:
+        client_socket.close()
+    
+   
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         client_socket.connect((server_domain, server_port))
-        print("Connected successfully.")
+        return True
     except socket.error as e:
         print(f"Connection failed: {e}")
-        exit()
+        return False
+    
+
+
 
 def send_request(data):
+    global client_socket
     try:
-        client_socket.sendall(json.dumps(data).encode("utf-8"))
-        response = client_socket.recv(4096).decode("utf-8")
-        if response:
-            return json.loads(response)
-        else:
-            print("Empty response from server.")
-            return {"status": "error", "message": "No response from server"}
-    except (ConnectionError, json.JSONDecodeError) as e:
-        print(f"An error occurred: {e}")
-        return {"status": "error", "message": str(e)}
+        # Reconnect if the socket is closed
+        if client_socket is None or client_socket.fileno() == -1:
+            if not connect():
+                return None  # Return None if reconnection fails
 
-def password_check(password):
-    special_symbols = ['$', '@', '#', '%']
-    while True:
-        if len(password) < 8:
-            print("Password should be at least 8 characters.")
-        elif not any(char.isdigit() for char in password):
-            print("Password should contain at least one numeral.")
-        elif not any(char.isupper() for char in password):
-            print("Password should contain at least one uppercase letter.")
-        elif not any(char.islower() for char in password):
-            print("Password should contain at least one lowercase letter.")
-        elif not any(char in special_symbols for char in password):
-            print("Password should contain at least one special symbol: $@#%")
-        elif password[0] in special_symbols:
-            print("Password should not start with a special character.")
-        else:
-            print("Password meets the requirements.")
-            return password
-        password = input("Enter a valid password: ")
+        client_socket.sendall(json.dumps(data).encode("utf-8"))
+        response = client_socket.recv(1024).decode("utf-8")
+        return json.loads(response)
+    except socket.error as e:
+        print(f"Socket error: {e}")
+        return None
+    except json.JSONDecodeError:
+        print("Received an invalid JSON response")
+        return None
+
+
+
+
+def password_check(passwd):
+    SpecialSym = ['$', '@', '#', '%']
+    if len(passwd) < 6:
+        print('Length should be at least 6.')
+        return False
+    if not any(char.isdigit() for char in passwd):
+        print('Password should have at least one numeral.')
+        return False
+    if not any(char.isupper() for char in passwd):
+        print('Password should have at least one uppercase letter.')
+        return False
+    if not any(char.islower() for char in passwd):
+        print('Password should have at least one lowercase letter.')
+        return False
+    if not any(char in SpecialSym for char in passwd):
+        print('Password should have at least one of the symbols $@#.')
+        return False
+    return True
+def is_email_in_use(email):
+    # Check if the email is already in use in the registered emails list
+    return email in registered_emails
+registered_emails =[]
+
+def is_username_in_use(username):
+    return username in registered_users
+
+
 
 def register():
+    name = input("Enter name: ")
     while True:
-        try:
-            name = input("Enter your full name (name and family name): ")
-            if len(name.split()) != 2:
-                print("Please enter your full name.")
-                continue
-            email = input("Enter your email: ")
-            if '@' not in email or '.' not in email.split('@')[-1]:
-                print("Invalid email format. Please try again.")
-                continue
-            username = input("Enter your username: ")
-            password = input("Enter your password (at least 8 characters,with one numeral, at least one upper case, at least one special symbol but not at the beginning): ")
-            password = password_check(password)
-
-            data = {
-                "action": "REGISTER",
-                "name": name,
-                "email": email,
-                "username": username,
-                "password": password
-            }
-            response = send_request(data)
-            print(response["message"])
-            return response["status"] == "success", username
-
-        except Exception as e:
-            print(f"An error occurred: {e}")
-
-def login():
-    MAX_ATTEMPTS = 3
-    attempts = 0
-    blocktime = 180  # Lockout time in seconds
-
-    while attempts < MAX_ATTEMPTS:
+        email = input("Enter email: ")
+        if '@' in email and '.' in email.split('@')[-1]:
+            if is_email_in_use(email):
+                print("This email is already in use. Please try a different email.")
+            else:
+                break
+        else:
+            print("Invalid email format. Please try again.")
+   
+    while True:
         username = input("Enter username: ")
-        password = input("Enter password: ")
-
-        data = {
-            "action": "LOGIN",
-            "username": username,
-            "password": password
-        }
-        response = send_request(data)
-        print(response.get("message", "An unexpected error occurred."))
-
-        if response.get("status") == "success":
-            print("Welcome to AUBoutique!")
-            return True, username
-        elif "Incorrect password" in response.get("message", ""):
-            attempts += 1
-        elif "Account locked" in response.get("message", ""):
-            print(f"Please wait for {blocktime / 60} minutes before trying again.")
-            time.sleep(blocktime)
-            return False, None
+        if is_username_in_use(username):
+            print("This username is already in use. Please choose another one.")
         else:
             break
+    while True:
+        password = input("Enter your password (at least 6 characters, at least one numeral, "
+                         "one uppercase letter, one lowercase letter, and one of the symbols $@#%): ")
+        if password_check(password):
+            break
+        else:
+            print("Password does not meet the requirements. Please try again.")
 
-        if attempts >= MAX_ATTEMPTS:
-            print("You've reached the maximum number of attempts. Please try again later.")
-            return False, None
-    return False, None
-
-def view_products():
-    data = {"action": "VIEW_PRODUCTS"}
+    # Hash the password using bcrypt
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')  # Decode to string for JSON serialization
+    
+    data = {
+        "action": "register",
+        "name": name,
+        "email": email,
+        "username": username,
+        "password": password_hash  # Send the hashed password
+    }
+    
+    registered_emails.append(email)
+    print(f"Welcome, {username}!")
     response = send_request(data)
-    if response["status"] == "success":
-        table = PrettyTable(["Product Name", "Picture", "Price", "Description", "Owner"])
-        for product in response.get("products", []):
-            table.add_row([product["name"], product['picture'], product["price"], product["description"], product["owner"]])
+    
+    
+    if response is None:
+        print("Registration failed due to a request error. Please try again later.")
+        return
+
+    # Access the response safely
+    print(response.get("response", "Registration successful."))
+    homepage()
+
+
+def login():
+    username = input("Enter username: ")
+    password = input("Enter password: ")
+
+    data = {
+        "action": "login",
+        "username": username,
+        "password": password
+    }
+    
+    # Send the login request
+    response = send_request(data)
+    if response is None:
+        print("Login failed due to a request error.")
+        return
+
+    if response.get("status") == "success":
+        print("You are logged in!")
+        homepage()  # Go to the homepage if login is successful
+    else:
+        print(response.get("message", "Login failed."))
+
+
+
+def display_products(products):
+    data = {"action": "view_products"}
+    products=send_request(data)
+    if products:
+        table = PrettyTable(["Product Name", "Price ($)", "Description", "Owner"])
+        for product in products:
+            table.add_row([product['name'], product['price'], product['description'], product['picture'], product['owner']])
         print("\nProducts for Sale:")
         print(table)
     else:
-        print(response["message"])
+        print("No products available for sale.")
 
 def view_products_by_owner():
-    owner = input("Enter the owner's username: ")
-    data = {"action": "VIEW_PRODUCTS_BY_OWNER", "owner": owner}
+    owner = input("Enter the owner's username to view their products: ")
+    data = {"action": "view_products_by_owner", "owner": owner}
+    
     response = send_request(data)
-    if response["status"] == "success":
-        table = PrettyTable(["Product Name", "Picture" ,"Price", "Description"])
-        for product in response.get("products", []):
-            table.add_row([product["name"], product["picture"], product["price"], product["description"]])
-        print(f"\nProducts by {owner}:")
+    products = response.get("products", [])
+    
+    if products:
+        table = PrettyTable()
+        table.field_names = ["Product Name", "Price (in $)", "Description", "Owner"]
+        for product in products:
+            table.add_row([product['name'], product['price'], product['description'], product['picture'], product['owner']])
+        print(f"Products from {owner}:")
         print(table)
     else:
-        print(response["message"])
+        print(f"No products found for owner {owner}.")
 
 def check_owner_status():
-    owner = input("Enter the owner's username: ")
-    data = {"action": "CHECK_OWNER_STATUS", "owner": owner}
-    response = send_request(data)
-    if response["status"] == "success":
-        print(f"{owner} is {response['status']}.")
-    else:
-        print(response["message"])
-
-def add_product(username):
-    product_name = input("Enter product name: ")
-    picture=input("Enter image path: ")
+    owner = input("Enter the owner's username to check their online status: ")
+    data = {"action": "check_owner_status", "owner": owner}
     
-    if not os.path.isfile(picture):
-        print("Image file does not exist.")
+    response = send_request(data)
+    if "message" in response:
+        print(response["message"])
+    else:
+        print("Error checking owner status.")
+
+def add_product():
+    username=input("enter your username: ")
+    name = input("Enter product name: ")
+    if not name:
+        print("Product name cannot be empty.")
         return
 
-    with open(picture, 'rb') as f:
-        image_data = f.read()
-        image_base64 = base64.b64encode(image_data).decode('utf-8')
-        
-    price = input("Enter product price: ")
+    description = input("Enter product description: ")
+    if not description:
+        print("Product description cannot be empty.")
+        return
 
+    price = input("Enter product price: ")
     try:
         price = float(price)
         if price <= 0:
@@ -171,37 +218,27 @@ def add_product(username):
     except ValueError:
         print("Invalid price. Please enter a number.")
         return
-
-    description = input("Enter product description: ")
+    while True:
+        image_path = input("Enter image path: ")
+        if os.path.isfile(image_path):
+            with open(image_path, 'rb') as f:
+                image_data = f.read()
+                image_base64 = base64.b64encode(image_data).decode()
+            break
+        else:
+            print("Image file does not exist. Please enter a valid file path.")
 
     data = {
-        "action": "ADD_PRODUCT",
-        "name": product_name,
-        "picture": image_base64,
-        "price": price,
+        "action": "add_product",
+        "name": name,
         "description": description,
-        "owner": username
+        "price": price,
+        "picture": image_base64,
+        "owner": username,
     }
-    response = send_request(data)
-    print(response["message"])
 
-def buy_product(username):
-    product_name = input("Enter the product name to buy: ")
-    data = {"action": "BUY_PRODUCT", "product_name": product_name, "username": username}
     response = send_request(data)
-    print(response["message"])
-
-def view_buyers(username):
-    data = {"action": "VIEW_BUYERS", "owner": username}
-    response = send_request(data)
-    if response["status"] == "success":
-        table = PrettyTable(["Product Name", "Buyer"])
-        for item in response.get("buyers", []):
-            table.add_row([item["product_name"], item["buyer"]])
-        print(f"\nBuyers of products owned by {username}:")
-        print(table)
-    else:
-        print(response["message"])
+    print(response.get("message", "Succesfully added product."))
 
 def receive_messages():
     while True:
@@ -212,28 +249,14 @@ def receive_messages():
                 print(f"{message_data['from']}: {message_data['message']}")
             else:
                 break
-        except json.JSONDecodeError:
-            print("Received non-JSON data.")
         except ConnectionResetError:
             print("Connection lost.")
-        except KeyboardInterrupt:
-            print("Chat interrupted by user.")
+            break
         except Exception as e:
-            print(f"An error occurred: {e}")
-        except (ConnectionResetError, ConnectionAbortedError):
-            print("Recipient disconnected. Exiting chat.")
+            print(f'An error occurred: {e}')
             break
 
-
-def chat_with_owner(username):
-    owner = input("Enter the owner's username to start chat: ")
-    data = {"action": "CHECK_OWNER_STATUS", "owner": owner}
-    response = send_request(data)
-    
-    if response.get("status") == "offline":
-        print(f"{owner} is currently offline. Please try again later.")
-        return
-
+def chat_with_owner(owner):
     print(f"Starting a chat with {owner}. Type 'exit' to end the chat.")
     threading.Thread(target=receive_messages, daemon=True).start()
     
@@ -241,72 +264,103 @@ def chat_with_owner(username):
         message = input("You: ")
         if message.lower() == 'exit':
             break
-        chat_data = {"action": "CHAT", "from": username, "to": owner, "message": message}
-        send_request(chat_data)
+        data = {
+            "action": "chat",
+            "owner": owner,
+            "message": message
+        }
+        response = send_request(data)
+        print(f"Response from {owner}: {response.get('response', 'No response.')}")
 
-def logout(username):
-    data = {"action": "LOGOUT", "username": username}
+
+
+def buy_product():
+    product_name = input("Enter the product name to buy: ")
+    data = {"action": "buy_product", "product_name": product_name}
+    response = send_request(data)
+    print(response.get("message", "Failed to buy product."))
+
+def view_buyers():
+    username = input("Enter your username to view buyers: ")
+    data = {"action": "view_buyers", "username": username}
     response = send_request(data)
     
-    print(response["message"])
-    client_socket.close()
+    buyers = response.get("buyers", [])
+    if buyers:
+        print("Buyers of your products:")
+        for buyer in buyers:
+            print(buyer)
+    else:
+        print("No buyers found.")
+
+def logout():
+    global client_socket
+    try:
+        client_socket.sendall(json.dumps({"action": "logout"}).encode('utf-8'))
+        response = client_socket.recv(1024).decode('utf-8')
+        print(response)
+    except socket.error:
+        print("Error while logging out.")
+    finally:
+        if client_socket:
+            client_socket.close()
+            client_socket = None  # Mark the socket as closed
+
+
+
+def homepage():
+    print("\n---- Homepage -----")
+    while True:
+        data={"action":"view_products"}
+        response=send_request(data)
+        products=response.get("products", [])
+        if products:
+            display_products(products)
+        else:
+            print("No products available for sale.")
+            print("You need to add a product before continuing.")
+        
+        print("1. Add a Product")
+        print("2. View Products by Owner")
+        print("3. Check Owner Online Status")
+        print("4. Buy a Product")
+        print("5. View Buyers")
+        print("6. Log Out")
+
+        choice = input("Choose an option: ")
+        if choice == "1":
+            add_product()
+            
+        elif choice == "2":
+            view_products_by_owner()
+        elif choice == "3":
+            check_owner_status()
+        elif choice == "4":
+            buy_product()
+        elif choice == "5":
+            view_buyers()
+        elif choice == "6":
+            print("Logging out...")
+            logout()
+            break
+        else:
+            print("Invalid choice. Please try again.")
 
 def main():
     connect()
     while True:
-        choice = input("\nChoose: [r]egister, [l]ogin, [q]uit: ").lower()
-        if choice == "r":
-            success, username = register()
-            if success:
-                print("Please login to continue.")
-                success, username = login()
-        elif choice == "l":
-            success, username = login()
-        if success:
-                while True:
-                    print("\n1. View Products")
-                    print("2. View Products by Owner")
-                    print("3. Check Owner Status")
-                    print("4. Add Product")
-                    print("5. Buy Product")
-                    print("6. View Buyers")
-                    print("7. Initiate Chat")
-                    print("8. Chat with Owner")
-                    print("9. Log Out")
-                    
-                    action = input("Choose an option: ")
-                    if action == "1":
-                        view_products()
-                    elif action == "2":
-                        view_products_by_owner()
-                    elif action == "3":
-                        check_owner_status()
-                    elif action == "4":
-                        add_product(username)
-                    elif action == "5":
-                        buy_product(username)
-                    elif action == "6":
-                        view_buyers(username)
-                    elif action == "7":
-                        chat_with_owner(username)
-                    elif action == "8":
-                        chat_with_owner(username)
-                    elif action == "9":
-                        logout(username)
-                        return
-                    else:
-                        print("Invalid choice. Try again.")
-        elif choice == "q":
-            print("Exiting.")
-            client_socket.close()
-            break
+        choice = input("\nChoose: [r]egister, [l]ogin: ").lower()
+        if choice == 'r':
+            register()
+        elif choice == 'l':
+            login()
         else:
-            print("Invalid choice. Choose [r], [l], or [q].")
+            print("Invalid choice. Please choose [r] or [l].")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("Exiting the application")
+        print("Exiting the application.")
     finally:
         client_socket.close()
