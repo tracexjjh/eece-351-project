@@ -4,6 +4,7 @@ import sqlite3
 import bcrypt
 import json
 import threading
+from datetime import datetime, timedelta
 
 def get_db_connection():
     try:
@@ -25,7 +26,6 @@ def create_tables():
                 username TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 email TEXT NOT NULL,
-                address TEXT NOT NULL,
                 password TEXT NOT NULL
             )
         """)
@@ -48,73 +48,100 @@ def create_tables():
         db.close()
 
 online_users = {}
-
-def send_response(conn, response):
+    
+def send_response(conn, data):
     try:
-        conn.sendall(json.dumps(response).encode("utf-8"))
-    except (ConnectionResetError, BrokenPipeError) as error:
-        print("Error sending the response",error)
-        conn.close()
+        conn.sendall(data.encode("utf-8"))  
+    except ConnectionError as e:
+        print(f"Connection error occurred: {e}")
+        return ""
+    except Exception as e:
+        print(f"An error occurred during request: {e}")
+        return ""
+    
+def receive_request(received):
+    received.recv(1024).decode("utf-8")
 
-def register(conn, user_data):
+def register(conn):
     db, cursor = get_db_connection()
-    username = user_data['username']
+    data = receive_request(conn)
+    data_dict = json.loads(data)
+
+    name = data_dict["name"]
+    email = data_dict["email"]
+    username = data_dict["username"]
+    password = data_dict["password"]
     cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
     if cursor.fetchone():
-        send_response(conn, {"message": "Username already exists."})
+        send_response(conn,"Username already exists.")
         return
     else:
-        password_hash = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt())
-        cursor.execute("INSERT INTO users (username, name, email, address, password) VALUES (?, ?, ?, ?, ?)",
-                       (username, user_data['name'], user_data['email'], user_data['address'], password_hash))
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        cursor.execute("INSERT INTO users (username, name, email, password) VALUES (?, ?, ?, ?)",
+                       (username, name, email, password_hash))
         db.commit()
-        send_response(conn, {"message": "Registration successful!"})
+        send_response(conn,"Registration successful!")
+        
+login_attempts_data = {}
+maxattempts=3
 
-def login(conn):
-    tries = 0
+def login(client_socket):
     db, cursor = get_db_connection()
+    data = receive_request(client_socket)
+    data_dict = json.loads(data)
+    
+    username = data_dict["username"]
+    password = data_dict["password"]
+    if username not in login_attempts_data:
+        login_attempts_data[username] = {"attempts": 0, "lockout_time": None}
 
-    while tries < 3:
-        message = conn.recv(1024).decode()
-        if not message:
-            break  # Exit if no message is received
+    user_data = login_attempts_data[username]
+    current_time = datetime.now()
+    if user_data["lockout_time"] and current_time < user_data["lockout_time"]:
+        time_remaining = (user_data["lockout_time"] - current_time).seconds
+        send_response(client_socket, f"Account locked. Try again in {time_remaining // 60} minutes.")
+        return
+    elif user_data["lockout_time"] and current_time >= user_data["lockout_time"]:
+       
+        user_data["attempts"] = 0
+        user_data["lockout_time"] = None
 
-        try:
-            command_data = json.loads(message)  # Load the incoming JSON data
-        except json.JSONDecodeError:
-            send_response(conn, {"response": "Invalid JSON format."})
-            continue  # Ask for input again
+    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+    result = cursor.fetchone()
+    
+    if result is None:
+        send_response(client_socket, "Username does not exist.")
+        return
 
-        username = command_data["username"]
-        password = command_data["password"]
+    stored_password_hash = result[0]
 
-        cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-
-        if result and bcrypt.checkpw(password.encode('utf-8'), result[0]):
-            print(f"User {username} logged in.")
-            send_response(conn, {"response": "Login successful!"})
-            return username  # Return the username on successful login
+    if bcrypt.checkpw(password.encode('utf-8'), stored_password_hash):
+        user_data["attempts"] = 0
+        user_data["lockout_time"] = None
+        send_response(client_socket, "LOGIN SUCCESSFUL!")
+    else:
+        user_data["attempts"] += 1
+        if user_data["attempts"] >= maxattempts:
+            user_data["lockout_time"] = current_time + timedelta(minutes=3)
+            send_response(client_socket, "Too many failed attempts. Account locked for 3 minutes.")
         else:
-            response = {"response": "Wrong Username Or Password"}
-            send_response(conn, response)
-            print("Wrong Username Or Password")
-            tries += 1
+            send_response(client_socket, f"Incorrect password. {3 - user_data['attempts']} attempts remaining.")
 
-    response = {"response": "You failed the login too many times. You are blocked."}
-    send_response(conn, response)
-    print("User blocked after too many failed attempts")
-    conn.close()  # Close the connection
-    return None  # Return None if login fails
-
-def view_products(connection):
+def view_products(client):
     db, cursor = get_db_connection()
     cursor.execute("SELECT name, picture, price, description, owner FROM products WHERE buyer IS NULL")
     products = cursor.fetchall()
     
-    product_list = [{"name": product[0], "picture": product[1], "price": product[2], "description": product[3], "owner": product[4]} for product in products]
-    response = {"response": "Products fetched successfully", "products": product_list}
-    send_response(connection, response)  # Correctly pass the connection
+    product_list = [{"Product name": product[0], 
+                     "Picture": product[1], 
+                     "Price": product[2], 
+                     "Description": product[3], 
+                     "Owner": product[4]
+                     } 
+                    for product in products
+                    ]
+    response = json.dumps(product_list)
+    send_response(client, response)  
     db.close()
 
 def view_products_by_owner(conn, owner):
@@ -127,23 +154,36 @@ def view_products_by_owner(conn, owner):
     
     products = cursor.fetchall()  
     product_list = [{"name": product[0], "price": product[1], "description": product[2], "picture": product[3]} for product in products]
-    response = {"response": "Products fetched successfully", "products": product_list}
+    response = json.dumps({"response": "Products fetched successfully", "products": product_list})
     send_response(conn, response)  # Correctly send response
     db.close()
 
 def add_product(conn, product_data):
     db, cursor = get_db_connection()
+    if db is None or cursor is None:
+        response = "Error: Unable to connect to the database"
+        send_response(conn, response)
+        return
+
+    required_keys = ['name', 'description', 'price', 'picture', 'owner']
+    if not all(key in product_data for key in required_keys):
+        response = "Error: Missing product data fields"
+        send_response(conn, response)
+        return
     try:
+        price = float(product_data['price'])
+
         cursor.execute("""
             INSERT INTO products (name, description, price, picture, owner, buyer) 
             VALUES (?, ?, ?, ?, ?, NULL)
-        """, (product_data['name'], product_data['description'], product_data['price'], product_data['picture'], product_data['owner']))
+        """, (product_data['name'], product_data['description'], price, product_data['picture'], product_data['owner'],))
+        
         db.commit()
-        response = {"message": "Product added successfully!"}
+        response = "Product added successfully"
     except sqlite3.IntegrityError:
-        response = {"message": "Product already exists."}
+        response = "Error: Product already exists"
     except Exception as e:
-        response = {"message": f"An error occurred: {str(e)}"}
+        response = f"Error occurred: {str(e)}"
     finally:
         send_response(conn, response)
         db.close()
@@ -155,17 +195,26 @@ def buy_product(conn, username, product_name):
     if product:
         cursor.execute("UPDATE products SET buyer = ? WHERE name = ?", (username, product_name))
         db.commit()
-        send_response(conn, {"message": f"Product '{product_name}' bought successfully! Please collect your bought products from the AUB Post Office by next week!"})
+        send_response(conn,"Product bought successfully! Please collect your bought products from the AUB Post Office by next week!")
     else:
-        send_response(conn, {"message": "Product not available."})
+        send_response(conn,"Product not available.")
+    db.close()
+
+def view_buyers(conn, username):
+    db, cursor = get_db_connection()
+    cursor.execute("SELECT product_name, buyer FROM products WHERE owner = ?", (username,))
+    buyerdetails = cursor.fetchall()
+    buyers_list = [{"product_name": product[0], "buyer": product[1]} for product in buyerdetails]
+    response = json.dumps({"response": "Buyers", "buyerdetails": buyers_list})
+    send_response(conn, response)
     db.close()
 
 def check_owner_status(conn, command_data):
     owner = command_data['owner']
     if owner in online_users:
-        response = {"message": f"{owner} is online."}
+        response = ("owner is online.")
     else:
-        response = {"message": f"{owner} is offline."}
+        response = ("owner is offline.")
     send_response(conn, response)
 
 def initiate_chat(conn, command_data):
@@ -176,9 +225,9 @@ def initiate_chat(conn, command_data):
         owner_conn = online_users[owner]
         chat_message = {"from": command_data["username"], "message": message}
         owner_conn.sendall(json.dumps(chat_message).encode("utf-8"))
-        response = {"response": "Message sent."}
+        response = ("message sent.")
     else:
-        response = {"response": f"{owner} is not online."}
+        response = ("owner is not online.")
     
     send_response(conn, response)
 
@@ -193,39 +242,48 @@ def receive_messages(conn):
         except Exception as e:
             print(f"Connection lost. Error: {e}")
             break  
+
+def logout(connection, username, cursor, db):
+     del online_users[username]
+     print(f"Connection closed for {username}.")
+     conn.close()
     
 def handle_client(conn):
-    username = None
-    try:
-        while True:
-            message = conn.recv(1024).decode()
-            if not message:
-                print(f'{username} has disconnected.')
-                break 
-            command_data = json.loads(message)  
-            action = command_data.get("action")
-
-            if action == "register":
-                register(conn, command_data)
-            elif action == "login":
-                username = login(conn)  
-                if username:
-                    online_users[username] = conn 
-            elif action == "check_online":
-                check_owner_status(conn, command_data)
-            elif action == "initiate_chat":
-                initiate_chat(conn, command_data)
-            elif action == "buy_product":
-                buy_product(conn, username, command_data)
-            elif action == "add_product":
-                add_product(conn, command_data)
-            elif action == "view_products_by_owner":
-                view_products_by_owner(conn, command_data)
-    finally:
-        if username in online_users:
-            del online_users[username]
-            print(f"Connection closed for {username}.")
-        conn.close()
+    while True:
+        try:
+            action = receive_request(conn)
+            if not action:  
+                print("User has disconnected unexpectedly.")
+                return
+    
+            if action == "REGISTER":
+                register(conn)  
+            elif action == "LOGIN":
+                login(conn)  
+            elif action == "ADD_PRODUCT":
+                add_product(conn, product_data)  
+            elif action == "VIEW_PRODUCTS":
+                view_products(conn)
+            elif action == "VIEW_PRODUCTS_BY_OWNER":
+                owner = conn.recv(1024).decode('utf-8')  
+                view_products_by_owner(conn, owner) 
+            elif action == "BUY_PRODUCT":
+                username = conn.recv(1024).decode('utf-8') 
+                product_name = conn.recv(1024).decode('utf-8') 
+                buy_product(conn, username, product_name)  
+            elif action == "VIEW_BUYERS":
+                username = conn.recv(1024).decode('utf-8')  
+                view_buyers(conn, username)  
+            elif action == "CHECK_OWNER_STATUS":
+                command_data = json.loads(conn.recv(1024).decode('utf-8'))  
+                check_owner_status(conn, command_data)  
+            elif action == "LOGOUT":
+                username = conn.recv(1024).decode('utf-8')  
+                logout(conn, username)  
+            else:
+                send_response(conn, "INVALID_COMMAND")
+        except Exception as e:
+            print(f"Error handling client request: {e}")
 
 if __name__ == "__main__":
     create_tables()
@@ -234,7 +292,7 @@ if __name__ == "__main__":
        sys.exit(1)
    
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('0.0.0.0', int(sys.argv[1])))
+    server.bind(('127.0.0.1', int(sys.argv[1])))
     server.listen(5)
     print("Server is listening...")
     
@@ -242,3 +300,5 @@ if __name__ == "__main__":
         conn, addr = server.accept()
         print(f"Connection from {addr} accepted.")
         threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
+
+    server.close()
