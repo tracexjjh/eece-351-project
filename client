@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLa
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 1791
+SERVER_PORT = 1234
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((SERVER_HOST, SERVER_PORT))
@@ -227,8 +227,11 @@ class MainMenuWindow(QtWidgets.QWidget):
 
         self.setLayout(self.layout)
 
-    
     def view_products(self):
+        self.view_products= ViewProductsWindow()
+        self.view_products_window.show()
+    
+    def view_buyers(self):
         self.view_buyers_window = ViewBuyersWindow() 
         self.view_buyers_window.show()
 
@@ -274,6 +277,62 @@ class MainMenuWindow(QtWidgets.QWidget):
         else:
             QMessageBox.warning(self, 'Error', 'Logout failed.')
             
+class ViewProductsWindow(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setGeometry(200, 200, 400, 300)
+        self.initUI()
+        
+    def initUI(self):
+        layout = QFormLayout()
+        
+        self.name=QLineEdit()
+        self.price=QLineEdit()
+        self.image=QLineEdit()
+        self.description=QLineEdit()
+        self.quantity=QLineEdit()
+        self.owner=QLineEdit()
+        
+        layout.addRow('Product name:', self.name)
+        layout.addRow('Product price:', self.price)
+        layout.addRow('Product image:', self.image)
+        layout.addRow('Product description:', self.description)
+        layout.addRow('Product owner:', self.owner)
+        layout.addRow('Product quantity:' , self.quantity)
+        
+        self.setLayout(layout)
+        
+    def viewproducts(self):
+        message=("VIEW_PRODUCTS")
+        client.send(message.encode('utf-8'))
+        response = client.recv(4096).decode('utf-8')
+        if response and "No products available" not in response:
+            products = response.split('|')
+            table = QTableWidget()
+            table.setRowCount(len(products))
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels(["Name", "Price", "Description", "Owner"])
+
+            for row, product_info in enumerate(products):
+                try:
+                    name, price, description, owner = product_info.split(', ')
+                    table.setItem(row, 0, QTableWidgetItem(name))
+                    table.setItem(row, 1, QTableWidgetItem(price))
+                    table.setItem(row, 2, QTableWidgetItem(description))
+                    table.setItem(row, 3, QTableWidgetItem(owner))
+                except ValueError:
+                    print(f"Error processing product info: {product_info}")
+
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+            products_window = QtWidgets.QWidget()
+            products_window.setWindowTitle("Products")
+            products_layout = QVBoxLayout()
+            products_layout.addWidget(table)
+           
+        else:
+            QMessageBox.information(self, "Products", response or "No products available")
+        
         
 class ViewBuyersWindow(QtWidgets.QWidget):
     def __init__(self, username):
@@ -298,11 +357,7 @@ class ViewBuyersWindow(QtWidgets.QWidget):
         layout.addRow('Description:', self.description_input)
         layout.addRow('Quantity:', self.quantity_input)
 
-        self.submit_button = QPushButton('View Buyers')
-        self.submit_button.setStyleSheet("background-color: lightblue")
-        self.submit_button.clicked.connect(self.submit_product)
-
-        layout.addWidget(self.submit_button)
+        
         self.setLayout(layout)
 
     def view_buyers(self):
