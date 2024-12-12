@@ -1,254 +1,255 @@
 import socket
-import sys
-import sqlite3
-import bcrypt
-import json
 import threading
-import base64
+import sqlite3
+from datetime import datetime
+import requests
 
-def get_db_connection():
-    try:
-        db = sqlite3.connect('AUBoutique.db', check_same_thread=False)
-        cursor = db.cursor()
-        return db, cursor
-    except sqlite3.Error as error:
-        print("Connection error with database:",error)
-        return None,None
+# Database setup
+conn = sqlite3.connect('marketplace.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    username TEXT,
+    password TEXT
+)''')
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    picture TEXT,
+    price REAL,
+    description TEXT,
+    quantity INTEGER,
+    owner_id INTEGER,
+    FOREIGN KEY(owner_id) REFERENCES users(id)
+)''')
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS ratings (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER,
+    user_id INTEGER,
+    rating INTEGER,
+    FOREIGN KEY(product_id) REFERENCES products(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+)''')
+conn.commit()
 
-def create_tables():
-    db, cursor = get_db_connection()
-    if db is None or cursor is None:
-        print ("Table creation failed due to database connection error")
-        return 
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                password TEXT NOT NULL
-            )
-        """)
-        db.commit()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                name TEXT PRIMARY KEY,
-                picture BLOB,
-                price REAL,
-                description TEXT,
-                owner TEXT NOT NULL,
-                buyer TEXT,
-                FOREIGN KEY (owner) REFERENCES users(username)
-            )
-        """)
-        db.commit()
-    except sqlite3.Error as error:
-        print ("Error creating the table: ", error)
-    finally:
-        db.close()
+cursor.execute(''' 
+CREATE TABLE IF NOT EXISTS purchases ( 
+    id INTEGER PRIMARY KEY, 
+    product_id INTEGER,
+    buyer_id INTEGER, 
+    quantity INTEGER, 
+    purchase_date TEXT, 
+    FOREIGN KEY(product_id) REFERENCES products(id), 
+    FOREIGN KEY(buyer_id) REFERENCES users(id)
+)''') 
+conn.commit()
 
+print("Database setup complete.")
+
+# Server details
+SERVER_HOST = '127.0.0.1'
+SERVER_PORT = 1791
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind((SERVER_HOST, SERVER_PORT))
+server.listen(5)
+print(f"Server started and listening on {SERVER_HOST}:{SERVER_PORT}")
+
+clients = {}
 online_users = {}
+currency_rates = {}
 
-def send_response(conn, response):
-    try:
-        conn.sendall(json.dumps(response).encode("utf-8"))
-    except (ConnectionResetError, BrokenPipeError) as error:
-        print("Error sending the response",error)
-        conn.close()
+def update_currency_rates():
+    global currency_rates
+    response = requests.get("https://api.exchangerate-api.com/v4/latest/USD")
+    data = response.json()
+    currency_rates = data['rates']
 
-def register(conn, user_data):
-    db, cursor = get_db_connection()
-    username = user_data['username']
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-    if cursor.fetchone():
-        send_response(conn, {"message": "Username already exists."})
-        return
-    else:
-        cursor.execute("INSERT INTO users (username, name, email,password) VALUES (?, ?, ?, ?, ?)",
-                       (username, user_data['name'], user_data['email'],user_data['password']))
-        db.commit()
-        send_response(conn, {"message": "Registration successful!"})
+def convert_currency(amount, from_currency, to_currency):
+    if from_currency != 'USD':
+        amount = amount / currency_rates[from_currency]
+    return amount * currency_rates[to_currency]
 
+def handle_message(client_socket, message):
+    parts = message.split('|')
+    command = parts[0]
 
-def login_user(data):
-    db, cursor = get_db_connection()
-    try:
-        # Retrieve the password hash from the database for the given username
-        cursor.execute("SELECT password FROM login_info WHERE username = ?", (data["username"],))
-        result = cursor.fetchone()
+    if command == 'REGISTER':
+        name, email, username, password = parts[1], parts[2], parts[3], parts[4]
+        cursor.execute('INSERT INTO users (name, email, username, password) VALUES (?, ?, ?, ?)', (name, email, username, password))
+        conn.commit()
+        client_socket.send(b"Registration successful!. Please login to continue")
         
-        if result:
-            # Decode the stored password hash from Base64 back to bytes if needed
-            stored_password_hash = base64.b64decode(result[0])
-
-            # Check the password sent by the client against the stored hash
-            if bcrypt.checkpw(data["password"].encode('utf-8'), stored_password_hash):
-                return {"status": "success", "message": "Logged in successfully!"}
-            else:
-                return {"status": "error", "message": "Invalid credentials"}
+    elif command == 'LOGIN':
+        username, password = parts[1], parts[2]
+        cursor.execute('SELECT * FROM users WHERE username=? AND password=?', (username, password))
+        user = cursor.fetchone()
+        if user:
+            clients[client_socket] = user[0]
+            online_users[user[0]] = (username)
+            client_socket.send(b"Login successful")
         else:
-            return {"status": "error", "message": "Invalid credentials"}
-    finally:
-        db.close()
-
-
-
-def view_products(connection):
-    db, cursor = get_db_connection()
-    cursor.execute("SELECT name, picture, price, description, owner FROM products WHERE buyer IS NULL")
-    products = cursor.fetchall()
-    
-    product_list = [{"name": product[0], "picture": product[1], "price": product[2], "description": product[3], "owner": product[4]} for product in products]
-    response = {"response": "Products fetched successfully", "products": product_list}
-    send_response(connection, response)  # Correctly pass the connection
-    db.close()
-
-def view_products_by_owner(conn, owner):
-    db, cursor = get_db_connection()
-    cursor.execute("""
-        SELECT name, price, description, picture
-        FROM products 
-        WHERE owner = ? AND buyer IS NULL
-    """, (owner,))
-    
-    products = cursor.fetchall()  
-    product_list = [{"name": product[0], "price": product[1], "description": product[2], "picture": product[3]} for product in products]
-    response = {"response": "Products fetched successfully", "products": product_list}
-    send_response(conn, response)  # Correctly send response
-    db.close()
-
-def add_product(conn, product_data):
-    db, cursor = get_db_connection()
-    try:
-        cursor.execute("""
-            INSERT INTO products (name, description, price, picture, owner, buyer) 
-            VALUES (?, ?, ?, ?, ?, NULL)
-        """, (product_data['name'], product_data['description'], product_data['price'], product_data['picture'], product_data['owner']))
-        db.commit()
-        response = {"message": "Product added successfully!"}
-    except sqlite3.IntegrityError:
-        response = {"message": "Product already exists."}
-    except Exception as e:
-        response = {"message": f"An error occurred: {str(e)}"}
-    finally:
-        send_response(conn, response)
-        db.close()
-
-def buy_product(conn, username, product_name):
-    db, cursor = get_db_connection()
-    cursor.execute("SELECT * FROM products WHERE name = ? AND buyer IS NULL", (product_name,))
-    product = cursor.fetchone()
-    if product:
-        cursor.execute("UPDATE products SET buyer = ? WHERE name = ?", (username, product_name))
-        db.commit()
-        send_response(conn, {"message": f"Product '{product_name}' bought successfully! Please collect your bought products from the AUB Post Office by next week!"})
-    else:
-        send_response(conn, {"message": "Product not available."})
-    db.close()
-
-def check_owner_status(conn, command_data):
-    owner = command_data['owner']
-    if owner in online_users:
-        response = {"message": f"{owner} is online."}
-    else:
-        response = {"message": f"{owner} is offline."}
-    send_response(conn, response)
-
-def initiate_chat(conn, command_data):
-    owner = command_data["owner"]
-    message = command_data["message"]
-
-    if owner in online_users:
-        owner_conn = online_users[owner]
-        chat_message = {"from": command_data["username"], "message": message}
-        owner_conn.sendall(json.dumps(chat_message).encode("utf-8"))
-        response = {"response": "Message sent."}
-    else:
-        response = {"response": f"{owner} is not online."}
-    
-    send_response(conn, response)
-
-def receive_messages(conn):
-    while True:
-        try:
-            message = conn.recv(1024).decode()
-            if not message:
-                break  # Exit if no message is received
-            chat_message = json.loads(message)
-            print(f"{chat_message['from']}: {chat_message['message']}")
-        except Exception as e:
-            print(f"Connection lost. Error: {e}")
-            break  
-def handle_logout(conn):
-    conn.sendall(json.dumps({"message": "Logout successful"}).encode("utf-8"))
-
-    
-def handle_client(conn):
-    username = None
-    try:
-        conn.settimeout(10)  # Timeout for receiving data to handle unresponsive clients
-        while True:
-            try:
-                message = conn.recv(1024).decode()
-                if not message:
-                    print(f'{username if username else "A client"} has disconnected.')
+            client_socket.send(b"Login failed")
+    elif command == 'LOGOUT':
+        user_id = clients.pop(client_socket, None)
+        if user_id:
+            online_users.pop(user_id, None)
+            client_socket.send(b"Logout successful")
+        else:
+            client_socket.send(b"Logout failed")
+            
+    elif command == 'VIEW_PRODUCTS':
+        cursor.execute('SELECT p.*, u.username FROM products p JOIN users u ON p.owner_id = u.id')
+        products = cursor.fetchall()
+        if products:
+            response = '|'.join([f"{product[1]},{product[3]},{product[4]},{product[2]},{product[6]},{product[5]}" for product in products])
+            client_socket.send(response.encode('utf-8'))
+        else:
+            client_socket.send(b"No products available.")
+            
+    elif command == 'ADD_PRODUCT':
+        name, picture, price, description, quantity, owner_username = parts[1], parts[2], float(parts[3]), parts[4], int(parts[5]), parts[6]
+        cursor.execute('SELECT id FROM users WHERE username=?', (owner_username,))
+        owner = cursor.fetchone()
+        if owner:
+            owner_id = owner[0]
+            cursor.execute('INSERT INTO products (name, picture, price, description, quantity, owner_id) VALUES (?, ?, ?, ?, ?, ?)', (name, picture, price, description, quantity, owner_id))
+            conn.commit()
+            client_socket.send(b"Product added successfully")
+        else:
+            client_socket.send(b"Owner not found")
+            
+    elif command == 'MESSAGE':
+        recipient_username, message_text, sender_username = parts[1], parts[2], parts[3]
+        cursor.execute('SELECT id FROM users WHERE username=?', (recipient_username,))
+        recipient = cursor.fetchone()
+        if recipient:
+            recipient_id = recipient[0]
+            recipient_socket = None
+            for socket, user_id in clients.items():
+                if user_id == recipient_id:
+                    recipient_socket = socket
                     break
+            if recipient_socket:
+                recipient_socket.send(f"Message from {sender_username}: {message_text}".encode('utf-8'))
+                client_socket.send(b"Message sent")
+            else:
+                client_socket.send(b"Recipient is not online")
+        else:
+            client_socket.send(b"User not found")
+            
+    elif command == 'BUY_PRODUCT': 
+        product_id, quantity, buyer_username = int(parts[1]), int(parts[2]), parts[3] 
+        cursor.execute('SELECT id FROM users WHERE username=?', (buyer_username,)) 
+        buyer = cursor.fetchone() 
+        cursor.execute('SELECT owner_id, quantity FROM products WHERE id=?', (product_id,)) 
+        product = cursor.fetchone() 
+        if product and product[1] >= quantity and buyer: 
+            new_quantity = product[1] - quantity 
+            if new_quantity == 0: 
+                cursor.execute('DELETE FROM products WHERE id=?', (product_id,)) 
+            else: 
+                cursor.execute('UPDATE products SET quantity=? WHERE id=?', (new_quantity, product_id)) 
+                cursor.execute('INSERT INTO purchases (product_id, buyer_id, quantity, purchase_date) VALUES (?, ?, ?, ?)', 
+                               (product_id, buyer[0], quantity, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))) 
+                conn.commit() 
+                confirmation_message = f"Product bought successfully! Collect from AUB Post Office on {datetime.now().strftime('%Y-%m-%d')}." 
+                client_socket.send(confirmation_message.encode('utf-8')) 
+        else: 
+            client_socket.send(b"Product not found or insufficient quantity")
+            
+    elif command == 'IS_USER_ONLINE':
+        username = parts[1]
+        cursor.execute('SELECT id FROM users WHERE username=?', (username,))
+        user = cursor.fetchone()
+        if user and user[0] in online_users:
+            client_socket.send(b"User is online")
+        else:
+            client_socket.send(b"User is offline")
+            
+    elif command == 'SEARCH_PRODUCTS': 
+        query = parts[1] 
+        cursor.execute('SELECT p.*, u.username FROM products p JOIN users u ON p.owner_id = u.id WHERE p.name LIKE ? OR p.description LIKE ?', (f'%{query}%', f'%{query}%')) 
+        products = cursor.fetchall() 
+        if products: 
+            response = '|'.join([f"{product[1]},{product[3]},{product[4]},{product[2]},{product[6]},{product[5]}" for product in products]) 
+            client_socket.send(response.encode('utf-8')) 
+        else: 
+            client_socket.send(b"No products found")
+            
+    elif command == 'RATE_PRODUCT':
+        product_id, rating, user_id = int(parts[1]), int(parts[2]), int(parts[3])
+        cursor.execute('INSERT INTO ratings (product_id, user_id, rating) VALUES (?, ?, ?)', (product_id, user_id, rating))
+        conn.commit()
+        client_socket.send(b"Rating submitted")
+        
+    elif command == 'GET_AVERAGE_RATING':
+        product_id = int(parts[1])
+        cursor.execute('SELECT AVG(rating) FROM ratings WHERE product_id=?', (product_id,))
+        average_rating = cursor.fetchone()[0]
+        client_socket.send(f"{average_rating:.2f}".encode('utf-8'))
+        
+    elif command == 'SEARCH_PRODUCTS':
+        query = parts[1]
+        cursor.execute('SELECT p.*, u.username FROM products p JOIN users u ON p.owner_id = u.id WHERE p.name LIKE ? OR p.description LIKE ?', (f'%{query}%', f'%{query}%'))
+        products = cursor.fetchall()
+        if products:
+            response = '|'.join([f"{product[1]},{product[3]},{product[4]},{product[2]},{product[6]},{product[5]}" for product in products])
+            client_socket.send(response.encode('utf-8'))
+        else:
+            client_socket.send(b"No products found")
+            
+    elif command == 'VIEW_BUYERS': 
+        owner_username = parts[1] 
+        cursor.execute('SELECT id FROM users WHERE username=?', (owner_username,)) 
+        owner = cursor.fetchone() 
+        if owner: 
+            owner_id = owner[0] 
+            cursor.execute('SELECT p.name, pr.quantity, u.username, pr.purchase_date FROM purchases pr JOIN products p ON pr.product_id = p.id JOIN users u ON pr.buyer_id = u.id WHERE p.owner_id = ?', (owner_id,)) 
+            purchases = cursor.fetchall() 
+            if purchases: 
+                response = '|'.join([f"{purchase[0]},{purchase[1]},{purchase[2]},{purchase[3]}" for purchase in purchases]) 
+                client_socket.send(response.encode('utf-8')) 
+            else:
+                client_socket.send(b"No purchases found") 
+        else: 
+                client_socket.send(b"Owner not found")
                 
-                # Parse JSON data
-                try:
-                    command_data = json.loads(message)
-                except json.JSONDecodeError:
-                    print("Received malformed JSON. Skipping this message.")
-                    send_response(conn, {"response": "Invalid JSON format."})
-                    continue
+    elif command == 'CLEAR_DATABASE':
+        cursor.execute('DELETE FROM users')
+        cursor.execute('DELETE FROM products')
+        cursor.execute('DELETE FROM ratings')
+        conn.commit()
+        client_socket.send(b"Database cleared successfully")
 
-                # Extract and process the action
-                action = command_data.get("action")
-                if action == "register":
-                    register(conn, command_data)
-                elif action == "login":
-                    username = login(conn)
-                    if username:
-                        online_users[username] = conn
-                elif action == "check_online":
-                    check_owner_status(conn, command_data)
-                elif action == "initiate_chat":
-                    initiate_chat(conn, command_data)
-                elif action == "buy_product":
-                    buy_product(conn, username, command_data)
-                elif action == "add_product":
-                    add_product(conn, command_data)
-                elif action == "view_products_by_owner":
-                    view_products_by_owner(conn, command_data)
-                else:
-                    print(f"Unknown action received: {action}")
-                    send_response(conn, {"response": "Unknown action."})
-            except socket.timeout:
-                print(f"Client {username if username else 'unknown'} timed out.")
-                break
-    finally:
-        if username in online_users:
-            del online_users[username]
-            print(f"Connection closed for {username}.")
-        conn.close()
-
-if __name__ == "__main__":
-    create_tables()
-    if len(sys.argv) != 2:
-        print("Usage: python server.py <port>")
-        sys.exit(1)
-
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('0.0.0.0', int(sys.argv[1])))
-    server.listen(5)
-    print("Server is listening...")
-
+def handle_client(client_socket, addr):
+    print(f"Accepted connection from {addr}")
     while True:
         try:
-            conn, addr = server.accept()
-            print(f"Connection from {addr} accepted.")
-            threading.Thread(target=handle_client, args=(conn,)).start()
-        except KeyboardInterrupt:
-            print("\nServer is shutting down...")
-            server.close()
+            message = client_socket.recv(1024).decode('utf-8')
+            if message:
+                handle_message(client_socket, message)
+            else:
+                break
+        except:
             break
+
+    user_id = clients.pop(client_socket, None)
+    if user_id:
+        online_users.pop(user_id, None)
+
+    client_socket.close()
+
+update_currency_rates()
+currency_thread = threading.Timer(3600, update_currency_rates)
+currency_thread.start()
+
+while True:
+    client_socket, client_address = server.accept()
+    clients[client_socket] = None
+    threading.Thread(target=handle_client, args=(client_socket, client_address)).start()
+    print(f"Connected to {client_address}")
