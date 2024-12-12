@@ -37,6 +37,19 @@ CREATE TABLE IF NOT EXISTS ratings (
 )''')
 conn.commit()
 
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    sender_id INTEGER,
+    receiver_id INTEGER,
+    message TEXT,
+    timestamp TEXT,
+    status TEXT DEFAULT 'unread',
+    FOREIGN KEY(sender_id) REFERENCES users(id),
+    FOREIGN KEY(receiver_id) REFERENCES users(id)
+)''')
+conn.commit()
+
 cursor.execute(''' 
 CREATE TABLE IF NOT EXISTS purchases ( 
     id INTEGER PRIMARY KEY, 
@@ -53,7 +66,7 @@ print("Database setup complete.")
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 1791
+SERVER_PORT = 9992
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((SERVER_HOST, SERVER_PORT))
 server.listen(5)
@@ -94,6 +107,76 @@ def handle_message(client_socket, message):
             client_socket.send(b"Login successful")
         else:
             client_socket.send(b"Login failed")
+    
+    elif command == 'GET_MESSAGES':
+        username = parts[1]
+        cursor.execute('SELECT id FROM users WHERE username=?', (username,))
+        user = cursor.fetchone()
+
+        if user:
+            user_id = user[0]
+            cursor.execute(
+            'SELECT u.username, m.message, m.timestamp '
+            'FROM messages m JOIN users u ON m.sender_id = u.id '
+            'WHERE m.receiver_id = ? AND m.status = "unread"',
+                (user_id,)
+        )
+            messages = cursor.fetchall()
+
+            if messages:
+                response = '\n'.join([f"{msg[0]}: {msg[1]} ({msg[2]})" for msg in messages])
+                cursor.execute(
+                'UPDATE messages SET status = "read" WHERE receiver_id = ?',
+                    (user_id,)
+            )
+                conn.commit()
+            else:
+                response = "No new messages"
+
+            client_socket.send(response.encode('utf-8'))
+        else:
+            client_socket.send(b"User not found")
+
+    elif command == 'CONVERT_CURRENCY':
+        try:
+            amount, from_currency, to_currency = float(parts[1]), parts[2], parts[3]
+
+        # Check if currencies exist in currency_rates
+            if from_currency not in currency_rates or to_currency not in currency_rates:
+                client_socket.send(b"Invalid currency")
+            else:
+            # Perform the conversion
+                if from_currency != 'USD':
+                    amount_in_usd = amount / currency_rates[from_currency]
+                else:
+                    amount_in_usd = amount
+
+                converted_amount = amount_in_usd * currency_rates[to_currency]
+                client_socket.send(f"{converted_amount:.2f}".encode('utf-8'))
+        except Exception as e:
+            client_socket.send(f"Error converting currency: {str(e)}".encode('utf-8'))
+
+
+    elif command == "GET_CURRENCY_RATE":
+        from_currency, to_currency = parts[1], parts[2]
+    # Static rates for demonstration
+        conversion_rates = {
+        "USD": 1.0,
+        "LBP": 90000.0,
+        "EUR": 0.85,
+        "GBP": 0.75,
+        "JPY": 110.0,
+        "AUD": 1.3,
+        "CAD": 1.25,
+        "CNY": 6.5
+    }
+
+        if from_currency in conversion_rates and to_currency in conversion_rates:
+            rate = conversion_rates[to_currency] / conversion_rates[from_currency]
+            client_socket.send(f"1 {from_currency} = {rate:.4f} {to_currency}".encode('utf-8'))
+        else:
+            client_socket.send("Invalid currency codes.".encode('utf-8'))
+            
     elif command == 'LOGOUT':
         user_id = clients.pop(client_socket, None)
         if user_id:
@@ -102,14 +185,27 @@ def handle_message(client_socket, message):
         else:
             client_socket.send(b"Logout failed")
             
+    # Part of the handle_message function
     elif command == 'VIEW_PRODUCTS':
-        cursor.execute('SELECT p.*, u.username FROM products p JOIN users u ON p.owner_id = u.id')
+        cursor.execute('SELECT p.name, p.price, p.picture, p.description, p.quantity, u.username FROM products p JOIN users u ON p.owner_id = u.id')
         products = cursor.fetchall()
         if products:
-            response = '|'.join([f"{product[1]},{product[3]},{product[4]},{product[2]},{product[6]},{product[5]}" for product in products])
+            response = '|'.join([f"{product[0]},{product[1]},{product[2]},{product[3]},{product[4]},{product[5]}" for product in products])
             client_socket.send(response.encode('utf-8'))
         else:
             client_socket.send(b"No products available.")
+
+   
+    elif command == 'VIEW_PRODUCTS_BY_OWNER':
+        owner_username = parts[1]
+        cursor.execute('SELECT p.name, p.price, p.picture, p.description, p.quantity, u.username FROM products p JOIN users u ON p.owner_id = u.id WHERE u.username = ?', (owner_username,))
+        products = cursor.fetchall()
+        if products:
+            response = '|'.join([f"{product[0]},{product[1]},{product[2]},{product[3]},{product[4]},{product[5]}" for product in products])
+            client_socket.send(response.encode('utf-8'))
+        else:
+            client_socket.send(b"No products available for this owner.")
+
             
     elif command == 'ADD_PRODUCT':
         name, picture, price, description, quantity, owner_username = parts[1], parts[2], float(parts[3]), parts[4], int(parts[5]), parts[6]
@@ -124,26 +220,33 @@ def handle_message(client_socket, message):
             client_socket.send(b"Owner not found")
             
     elif command == 'MESSAGE':
-        recipient_username, message_text, sender_username = parts[1], parts[2], parts[3]
+        sender_username, recipient_username, message_text = parts[1], parts[2], parts[3]
         cursor.execute('SELECT id FROM users WHERE username=?', (recipient_username,))
         recipient = cursor.fetchone()
-        if recipient:
+        cursor.execute('SELECT id FROM users WHERE username=?', (sender_username,))
+        sender = cursor.fetchone()
+        if recipient and sender:
             recipient_id = recipient[0]
-            recipient_socket = None
-            for socket, user_id in clients.items():
-                if user_id == recipient_id:
-                    recipient_socket = socket
-                    break
-            if recipient_socket:
-                recipient_socket.send(f"Message from {sender_username}: {message_text}".encode('utf-8'))
-                client_socket.send(b"Message sent")
+            sender_id = sender[0]
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+            if recipient_id in online_users.values():
+                for sock, uid in clients.items():
+                    if uid == recipient_id:
+                        sock.send(f"Message from {sender_username}: {message_text}".encode('utf-8'))
+                        break
             else:
-                client_socket.send(b"Recipient is not online")
+                cursor.execute(
+                    'INSERT INTO messages (sender_id, receiver_id, message, timestamp) VALUES (?, ?, ?, ?)',
+                    (sender_id, recipient_id, message_text, timestamp)
+            )
+                conn.commit()
+            client_socket.send(b"Message sent")
         else:
             client_socket.send(b"User not found")
             
     elif command == 'BUY_PRODUCT': 
-        product_id, quantity, buyer_username = int(parts[1]), int(parts[2]), parts[3] 
+        buyer_username, product_id, quantity = (parts[1]), int(parts[2]), int(parts[3]) 
         cursor.execute('SELECT id FROM users WHERE username=?', (buyer_username,)) 
         buyer = cursor.fetchone() 
         cursor.execute('SELECT owner_id, quantity FROM products WHERE id=?', (product_id,)) 
@@ -155,7 +258,7 @@ def handle_message(client_socket, message):
             else: 
                 cursor.execute('UPDATE products SET quantity=? WHERE id=?', (new_quantity, product_id)) 
                 cursor.execute('INSERT INTO purchases (product_id, buyer_id, quantity, purchase_date) VALUES (?, ?, ?, ?)', 
-                               (product_id, buyer[0], quantity, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))) 
+                               (product_id, buyer[0], quantity, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
                 conn.commit() 
                 confirmation_message = f"Product bought successfully! Collect from AUB Post Office on {datetime.now().strftime('%Y-%m-%d')}." 
                 client_socket.send(confirmation_message.encode('utf-8')) 
@@ -181,18 +284,28 @@ def handle_message(client_socket, message):
         else: 
             client_socket.send(b"No products found")
             
+    # Part of the handle_message function
     elif command == 'RATE_PRODUCT':
-        product_id, rating, user_id = int(parts[1]), int(parts[2]), int(parts[3])
-        cursor.execute('INSERT INTO ratings (product_id, user_id, rating) VALUES (?, ?, ?)', (product_id, user_id, rating))
-        conn.commit()
-        client_socket.send(b"Rating submitted")
-        
+         try:
+             product_id, rating, user_id = int(parts[1]), int(parts[2]), int(parts[3])
+             cursor.execute('INSERT INTO ratings (product_id, user_id, rating) VALUES (?, ?, ?)', (product_id, user_id, rating))
+             conn.commit()
+             client_socket.send(b"Rating submitted")
+         except Exception as e:
+             client_socket.send(f"Error submitting rating: {e}".encode('utf-8'))
+ 
     elif command == 'GET_AVERAGE_RATING':
-        product_id = int(parts[1])
-        cursor.execute('SELECT AVG(rating) FROM ratings WHERE product_id=?', (product_id,))
-        average_rating = cursor.fetchone()[0]
-        client_socket.send(f"{average_rating:.2f}".encode('utf-8'))
-        
+         try:
+             product_id = int(parts[1])
+             cursor.execute('SELECT AVG(rating) FROM ratings WHERE product_id=?', (product_id,))
+             average_rating = cursor.fetchone()[0]
+             if average_rating:
+                 client_socket.send(f"Average rating: {average_rating:.2f}".encode('utf-8'))
+             else:
+                 client_socket.send(b"No ratings available for this product")
+         except Exception as e:
+             client_socket.send(f"Error fetching average rating: {e}".encode('utf-8'))
+
     elif command == 'SEARCH_PRODUCTS':
         query = parts[1]
         cursor.execute('SELECT p.*, u.username FROM products p JOIN users u ON p.owner_id = u.id WHERE p.name LIKE ? OR p.description LIKE ?', (f'%{query}%', f'%{query}%'))
@@ -203,28 +316,37 @@ def handle_message(client_socket, message):
         else:
             client_socket.send(b"No products found")
             
-    elif command == 'VIEW_BUYERS': 
-        owner_username = parts[1] 
-        cursor.execute('SELECT id FROM users WHERE username=?', (owner_username,)) 
-        owner = cursor.fetchone() 
-        if owner: 
-            owner_id = owner[0] 
-            cursor.execute('SELECT p.name, pr.quantity, u.username, pr.purchase_date FROM purchases pr JOIN products p ON pr.product_id = p.id JOIN users u ON pr.buyer_id = u.id WHERE p.owner_id = ?', (owner_id,)) 
-            purchases = cursor.fetchall() 
-            if purchases: 
-                response = '|'.join([f"{purchase[0]},{purchase[1]},{purchase[2]},{purchase[3]}" for purchase in purchases]) 
-                client_socket.send(response.encode('utf-8')) 
+    elif command == "VIEW_BUYERS":
+        owner_username = parts[1]
+        try:
+            # Query to fetch buyers for products owned by the given owner
+            cursor.execute('''
+                SELECT p.name AS product_name, u.username AS buyer_name, b.quantity, (b.quantity * p.price) AS total_price
+                FROM purchases b
+                JOIN products p ON b.product_id = p.id
+                JOIN users u ON b.buyer_id = u.id
+                WHERE p.owner_id = (SELECT id FROM users WHERE username = ?)
+            ''', (owner_username,))
+            buyers = cursor.fetchall()
+    
+            # Format the response
+            if buyers:
+                response = '|'.join([f"{row[0]},{row[1]},{row[2]},{row[3]}" for row in buyers])
+                client_socket.send(response.encode('utf-8'))
             else:
-                client_socket.send(b"No purchases found") 
-        else: 
-                client_socket.send(b"Owner not found")
-                
-    elif command == 'CLEAR_DATABASE':
-        cursor.execute('DELETE FROM users')
-        cursor.execute('DELETE FROM products')
-        cursor.execute('DELETE FROM ratings')
-        conn.commit()
-        client_socket.send(b"Database cleared successfully")
+                client_socket.send(b"No buyers found for your products.")
+        except Exception as e:
+            # Handle unexpected errors
+            client_socket.send(f"Error: {str(e)}".encode('utf-8'))
+
+    elif command== 'LOGOUT':
+        username = parts[1]
+        if username in online_users:
+            del online_users[username]
+            
+            client_socket.send("Logout successful".encode('utf-8'))
+        else:
+            client_socket.send("Error: User not logged in.".encode('utf-8'))
 
 def handle_client(client_socket, addr):
     print(f"Accepted connection from {addr}")
