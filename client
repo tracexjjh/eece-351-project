@@ -4,11 +4,11 @@ import os
 import base64
 import requests
 from PyQt5 import QtWidgets, QtGui, QtCore
-from PyQt5.QtWidgets import QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QFormLayout, QHeaderView
+from PyQt5.QtWidgets import QWidget, QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QFormLayout, QHeaderView
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 1234
+SERVER_PORT = 9992
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((SERVER_HOST, SERVER_PORT))
@@ -161,6 +161,7 @@ class MainMenuWindow(QtWidgets.QWidget):
     def __init__(self, username):
         super().__init__()
         self.username = username
+        self.current_mode="Light" #deault light
         self.setWindowTitle('Main Menu')
         self.setGeometry(200, 200, 600, 400)
         self.initUI()
@@ -172,79 +173,153 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.title.setFont(QtGui.QFont('Arial', 20))
         self.title.setAlignment(QtCore.Qt.AlignCenter)
         self.layout.addWidget(self.title)
+        
+        self.retrieve_messages_button = QPushButton('Retrieve Messages')
+        self.retrieve_messages_button.setStyleSheet("background-color: lightpink")
+        self.retrieve_messages_button.clicked.connect(self.retrieve_messages)
 
         self.view_products_button = QPushButton('View Products')
-        self.view_products_button.setStyleSheet("background-color: lightpink")
+        self.view_products_button.setStyleSheet("background-color: lightcoral")
         self.view_products_button.clicked.connect(self.view_products)
+        
+        self.view_currency_rates_button = QPushButton('View Currency Rates')
+        self.view_currency_rates_button.setStyleSheet("background-color: lightpink")
+        self.view_currency_rates_button.clicked.connect(self.view_currency_rates_button)
 
+        self.convert_currency_button = QPushButton('Convert Currency')
+        self.convert_currency_button.setStyleSheet("background-color: lightcoral")
+        self.convert_currency_button.clicked.connect(self.convert_currency)
+        
+        self.view_products_by_owner_button = QPushButton('View Products By Owner')
+        self.view_products_by_owner_button.setStyleSheet("background-color: lightpink")
+        self.view_products_by_owner_button.clicked.connect(self.view_products_by_owner)
+        
         self.add_product_button = QPushButton('Add Product')
         self.add_product_button.setStyleSheet("background-color: lightcoral")
         self.add_product_button.clicked.connect(self.add_product)
         
-
+        self.search_product_button = QPushButton('Search for product')
+        self.search_product_button.setStyleSheet("background-color: lightpink")
+        self.search_product_button.clicked.connect(self.search_product)
+        
+        self.view_buyers_button = QPushButton('View buyers')
+        self.view_buyers_button.setStyleSheet("background-color: lightcoral")
+        self.view_buyers_button.clicked.connect(self.view_buyers)
+        
+        self.buy_product_button = QPushButton('Buy Product')
+        self.buy_product_button.setStyleSheet("background-color: lightpink")
+        self.buy_product_button.clicked.connect(self.buy_product)
+        
+        self.check_online_button = QPushButton('Check if User is Online')
+        self.check_online_button.setStyleSheet("background-color: lightcoral")
+        self.check_online_button.clicked.connect(self.check_if_user_online)
+        
         self.message_user_button = QPushButton('Message User')
         self.message_user_button.setStyleSheet("background-color: lightpink")
         self.message_user_button.clicked.connect(self.message_user)
-
-        self.buy_product_button = QPushButton('Buy Product')
-        self.buy_product_button.setStyleSheet("background-color: lightcoral")
-        self.buy_product_button.clicked.connect(self.buy_product)
-
-        self.check_online_button = QPushButton('Check if User is Online')
-        self.check_online_button.setStyleSheet("background-color: lightpink")
-        self.check_online_button.clicked.connect(self.check_if_user_online)
-
-        self.view_wishlist_button = QPushButton('View Wishlist')
-        self.view_wishlist_button.setStyleSheet("background-color: lightpink")
-        self.view_wishlist_button.clicked.connect(self.view_wishlist)
-
-        self.add_to_wishlist_button = QPushButton('Add to Wishlist')
-        self.add_to_wishlist_button.setStyleSheet("background-color: lightcoral")
-        self.add_to_wishlist_button.clicked.connect(self.add_to_wishlist)
+        
+        self.view_average_rate_button = QPushButton("View Average Rating")
+        self.view_average_rate_button.setStyleSheet("background-color: lightcoral")
+        self.view_average_rate_button.clicked.connect(self.view_average_rate)
+        
+        self.submit_button = QPushButton('Submit Rating')
+        self.submit_button.setStyleSheet("background-color: lightpink")
+        self.submit_button.clicked.connect(self.rate_product)
 
         self.logout_button = QPushButton('Logout')
         self.logout_button.setStyleSheet("background-color: lightcoral")
         self.logout_button.clicked.connect(self.logout)
-
-        self.search_product_button = QPushButton('Search for product')
-        self.search_product_button.setStyleSheet("background-color: lightpink")
-        self.search_product_button.clicked.connect(self.logout)
         
-        self.view_buyers_button = QPushButton('View buyers')
-        self.view_buyers_button.setStyleSheet("background-color: lightcoral")
-        self.view_buyers_button.clicked.connect(self.logout)
+        
+        self.toggle_button = QPushButton("Switch to Dark Mode")
+        self.toggle_button.clicked.connect(self.toggle_mode)
+        self.layout.addWidget(self.toggle_button)
 
+        self.layout.addWidget(self.retrieve_messages_button)
         self.layout.addWidget(self.view_products_button)
+        self.layout.addWidget(self.view_currency_rates_button)
+        self.layout.addWidget(self.convert_currency_button)
+        self.layout.addWidget(self.view_products_by_owner_button)
         self.layout.addWidget(self.add_product_button)
-        self.layout.addWidget(self.message_user_button)
-        self.layout.addWidget(self.buy_product_button)
-        self.layout.addWidget(self.check_online_button)
-        self.layout.addWidget(self.logout_button)
-        self.layout.addWidget(self.view_wishlist_button)
-        self.layout.addWidget(self.add_to_wishlist_button)
         self.layout.addWidget(self.search_product_button)
         self.layout.addWidget(self.view_buyers_button)
+        self.layout.addWidget(self.buy_product_button)
+        self.layout.addWidget(self.check_online_button)
+        self.layout.addWidget(self.message_user_button)
+        self.layout.addWidget(self.view_average_rate_button)
+        self.layout.addWidget(self.submit_button)
+        self.layout.addWidget(self.logout_button)
 
         self.setLayout(self.layout)
+        self.apply_light_mode()
+
+    def toggle_mode(self):
+        if self.current_mode == "light":
+            self.apply_dark_mode()
+        else:
+            self.apply_light_mode()
+
+    def apply_light_mode(self):
+        light_style = """
+        QWidget {
+            background-color: white;
+            color: black;
+        }
+        QPushButton {
+            background-color: #f0f0f0;
+            color: black;
+            border: 1px solid #d3d3d3;
+        }
+        QLabel {
+            color: black;
+        }
+        """
+        self.setStyleSheet(light_style)
+        self.current_mode = "light"
+        self.toggle_button.setText("Switch to Dark Mode")
+
+    def apply_dark_mode(self):
+        dark_style = """
+        QWidget {
+            background-color: #121212;
+            color: white;
+        }
+        QPushButton {
+            background-color: #1e1e1e;
+            color: white;
+            border: 1px solid #3a3a3a;
+        }
+        QLabel {
+            color: white;
+        }
+        """
+        self.setStyleSheet(dark_style)
+        self.current_mode = "dark"
+        self.toggle_button.setText("Switch to Light Mode")
 
     def view_products(self):
-        self.view_products= ViewProductsWindow()
+        self.view_products_window= ViewProductsWindow()
         self.view_products_window.show()
+        
+    def view_products_by_owner(self):
+        self.view_products_by_owner_window= ViewProductsByOwnerWindow()
+        self.view_products_by_owner_window.show()
     
     def view_buyers(self):
-        self.view_buyers_window = ViewBuyersWindow() 
+        self.view_buyers_window = ViewBuyersWindow(self.username) 
         self.view_buyers_window.show()
 
-    def search_products(self): 
-        self.search_window = SearchProductsWindow() 
-        self.search_window.show()
+    def search_product(self): 
+        self.search_product_window = SearchProductsWindow() 
+        self.search_product_window.show()
 
     def add_product(self):
         self.add_product_window = AddProductWindow(self.username)
         self.add_product_window.show()
 
     def message_user(self):
-        pass  # Implement messaging in peer-to-peer fashion
+        self.message_user_window = MessageUserWindow(self.username)
+        self.message_user_window.show()
 
     def buy_product(self):
         self.buy_product_window = BuyProductWindow(self.username)
@@ -254,163 +329,317 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.online_window = OnlineWindow()
         self.online_window.show()
         
-    def view_wishlist(self):
-        self.view_wishlist_window = ViewWishlistWindow(self.username)
-        self.view_wishlist_window.show()
+    def rate_product(self):
+        self.rate_product_window = RateProductWindow(self.user_id)
+        self.rate_product_window.show()
+    
+    def view_average_rate(self): 
+        self.view_average_rating_window = ViewAverageRatingWindow() 
+        self.view_average_rating_window.show()
+        
+    def retrieve_messages(self):
+        self.retrieve_messages_window = RetrieveMessagesWindow(self.username)
+        self.retrieve_messages_window.show()
 
-    def add_to_wishlist(self):
-        user_id = self.get_user_id(self.username)
-        product_id, ok = QtWidgets.QInputDialog.getText(self, 'Input', 'Enter Product ID:')
-        if ok and product_id:
-            message=(f"ADD_TO_WISHLIST|{user_id}|{product_id}")
-            client.send(message.encode('utf-8'))
-            response = client.recv(4096).decode('utf-8')
-            QMessageBox.information(self, 'Info', response)
+    def view_currency_rates(self):
+        import json
+        try:
+            client.send("GET_CURRENCY_RATES".encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')  # Receiving JSON encoded data
+            try:
+                rates = json.loads(response)  # Parse the JSON data
+                rates_str = "\n".join([f"{currency}: {rate:.2f}" for currency, rate in rates.items()])
+                QMessageBox.information(self, "Currency Rates", rates_str)
+            except json.JSONDecodeError:
+                QMessageBox.warning(self, "Error", "Failed to parse currency rates.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to fetch currency rates: {e}")
+
+    def convert_currency(self):
+        self.convert_window = ConvertCurrencyWindow()
+        self.convert_window.show()
+    
                                                          
     def logout(self):
-        message=(f"LOGOUT|{self.username}")
-        client.send(message.encode('utf-8'))
-        response = client.recv(4096).decode('utf-8')
-        if response == "Logout successful":
-            QMessageBox.information(self, 'Info', 'You have been logged out.')
-            self.close()
-        else:
-            QMessageBox.warning(self, 'Error', 'Logout failed.')
-            
+        try:
+            # Send logout request to the server
+            message = f"LOGOUT|{self.username}"
+            client.send(message.encode('utf-8'))
+    
+            # Receive the server's response
+            response = client.recv(4096).decode('utf-8')
+    
+            # Check the server's response
+            if response == "Logout successful":
+                QMessageBox.information(self, 'Info', 'You have been logged out successfully.')
+                self.close()
+            else:
+                QMessageBox.warning(self, 'Error', f'Logout failed: {response}')
+        except socket.error as e:
+            # Handle socket-related errors
+            QMessageBox.critical(self, 'Connection Error', f"Failed to communicate with the server: {e}")
+        except Exception as e:
+            # Handle any unexpected errors
+            QMessageBox.critical(self, 'Error', f"An unexpected error occurred: {e}")
+        finally:
+            try:
+                # Ensure the client socket is closed
+                client.close()
+            except Exception:
+                pass  # Ignore errors during socket closure
+
+class CurrencyRatesWindow(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('Currency Rates')
+        self.setGeometry(200, 200, 400, 300)
+        self.initUI()
+
+    def initUI(self):
+        layout = QFormLayout()
+
+        # Dropdowns for currencies
+        self.from_currency_dropdown = QtWidgets.QComboBox()
+        self.from_currency_dropdown.addItems(["USD", "LBP", "EUR", "GBP", "JPY", "AUD", "CAD", "CNY"])
+        layout.addRow('From Currency:', self.from_currency_dropdown)
+
+        self.to_currency_dropdown = QtWidgets.QComboBox()
+        self.to_currency_dropdown.addItems(["USD", "LBP", "EUR", "GBP", "JPY", "AUD", "CAD", "CNY"])
+        layout.addRow('To Currency:', self.to_currency_dropdown)
+
+        # Check rate button
+        self.check_button = QPushButton("Check Rate")
+        self.check_button.clicked.connect(self.check_rate)
+        layout.addWidget(self.check_button)
+
+        # Result display
+        self.result_label = QLabel("")
+        layout.addWidget(self.result_label)
+
+        self.setLayout(layout)
+
+    def check_rate(self):
+        from_currency = self.from_currency_dropdown.currentText()
+        to_currency = self.to_currency_dropdown.currentText()
+
+        if from_currency == to_currency:
+            self.result_label.setText("The conversion rate is 1.00")
+            return
+
+        # Construct the request
+        message = f"GET_CURRENCY_RATE|{from_currency}|{to_currency}"
+        try:
+            client.send(message.encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')
+            self.result_label.setText(response)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to fetch rate: {e}")
+
+class ConvertCurrencyWindow(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('Currency Converter')
+        self.setGeometry(200, 200, 400, 300)
+        self.conversion_rates = {
+            "USD": 1.0,
+            "LBP": 90000.0,
+            "EUR": 0.85,
+            "GBP": 0.75,
+            "JPY": 110.0,
+            "AUD": 1.3,
+            "CAD": 1.25,
+            "CNY": 6.5
+        }
+        self.initUI()
+
+
+    def initUI(self):
+        layout = QFormLayout()
+
+        # Amount input
+        self.amount_input = QLineEdit()
+        layout.addRow('Amount:', self.amount_input)
+
+        # Dropdown menus for currencies
+        self.from_currency_dropdown = QtWidgets.QComboBox()
+        self.from_currency_dropdown.addItems(["USD", "LBP", "EUR", "GBP", "JPY", "AUD", "CAD", "CNY"])
+        layout.addRow('From Currency:', self.from_currency_dropdown)
+
+        self.to_currency_dropdown = QtWidgets.QComboBox()
+        self.to_currency_dropdown.addItems(["USD", "LBP", "EUR", "GBP", "JPY", "AUD", "CAD", "CNY"])
+        layout.addRow('To Currency:', self.to_currency_dropdown)
+
+        # Convert button
+        self.convert_button = QPushButton('Convert')
+        self.convert_button.setStyleSheet("background-color: lightgreen")
+        self.convert_button.clicked.connect(self.convert)
+
+        # Result display
+        self.result_label = QLabel("")
+        layout.addWidget(self.result_label)
+
+        layout.addWidget(self.convert_button)
+        self.setLayout(layout)
+
+    def convert(self):
+        try:
+        # Get user inputs
+            amount = float(self.amount_input.text())
+            from_currency = self.from_currency_dropdown.currentText()
+            to_currency = self.to_currency_dropdown.currentText()
+
+        # Check if the conversion is between the same currency
+            if from_currency == to_currency:
+                self.result_label.setText(f"The amount remains the same: {amount:.2f} {to_currency}")
+                return
+
+        # Ensure both currencies exist in the conversion rates
+            if from_currency in self.conversion_rates and to_currency in self.conversion_rates:
+            # Perform the conversion
+                rate = self.conversion_rates[to_currency] / self.conversion_rates[from_currency]
+                converted_amount = amount * rate
+                self.result_label.setText(f"Converted Amount: {converted_amount:.2f} {to_currency}")
+            else:
+                self.result_label.setText("Invalid currency selection.")
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Please enter a valid numeric amount.")
+      
 class ViewProductsWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setGeometry(200, 200, 400, 300)
+        self.setWindowTitle("Products")
+        self.setGeometry(200, 200, 800, 600)
         self.initUI()
-        
+
     def initUI(self):
-        layout = QFormLayout()
+        layout = QVBoxLayout()
         
-        self.name=QLineEdit()
-        self.price=QLineEdit()
-        self.image=QLineEdit()
-        self.description=QLineEdit()
-        self.quantity=QLineEdit()
-        self.owner=QLineEdit()
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Name", "Price", "Image", "Description", "Quantity", "Owner"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
-        layout.addRow('Product name:', self.name)
-        layout.addRow('Product price:', self.price)
-        layout.addRow('Product image:', self.image)
-        layout.addRow('Product description:', self.description)
-        layout.addRow('Product owner:', self.owner)
-        layout.addRow('Product quantity:' , self.quantity)
-        
+        layout.addWidget(self.table)
         self.setLayout(layout)
-        
-    def viewproducts(self):
-        message=("VIEW_PRODUCTS")
+        self.load_products()
+
+    def load_products(self):
+        message = "VIEW_PRODUCTS"
         client.send(message.encode('utf-8'))
         response = client.recv(4096).decode('utf-8')
         if response and "No products available" not in response:
             products = response.split('|')
-            table = QTableWidget()
-            table.setRowCount(len(products))
-            table.setColumnCount(4)
-            table.setHorizontalHeaderLabels(["Name", "Price", "Description", "Owner"])
-
+            self.table.setRowCount(len(products))
             for row, product_info in enumerate(products):
                 try:
-                    name, price, description, owner = product_info.split(', ')
-                    table.setItem(row, 0, QTableWidgetItem(name))
-                    table.setItem(row, 1, QTableWidgetItem(price))
-                    table.setItem(row, 2, QTableWidgetItem(description))
-                    table.setItem(row, 3, QTableWidgetItem(owner))
+                    name, price, image, description, quantity, owner = product_info.split(',')
+                    self.table.setItem(row, 0, QTableWidgetItem(name))
+                    self.table.setItem(row, 1, QTableWidgetItem(price))
+                    self.table.setItem(row, 2, QTableWidgetItem(image))
+                    self.table.setItem(row, 3, QTableWidgetItem(description))
+                    self.table.setItem(row, 4, QTableWidgetItem(quantity))
+                    self.table.setItem(row, 5, QTableWidgetItem(owner))
                 except ValueError:
                     print(f"Error processing product info: {product_info}")
-
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
-            products_window = QtWidgets.QWidget()
-            products_window.setWindowTitle("Products")
-            products_layout = QVBoxLayout()
-            products_layout.addWidget(table)
-           
         else:
             QMessageBox.information(self, "Products", response or "No products available")
-        
-        
-class ViewBuyersWindow(QtWidgets.QWidget):
-    def __init__(self, username):
+            
+class ViewProductsByOwnerWindow(QtWidgets.QWidget):
+    def __init__(self):
         super().__init__()
-        self.username = username
-        self.setWindowTitle('View Buyers')
-        self.setGeometry(200, 200, 400, 300)
+        self.setWindowTitle("Owner's Products")
+        self.setGeometry(200, 200, 800, 600)
         self.initUI()
 
     def initUI(self):
-        layout = QFormLayout()
-
-        self.productname_input = QLineEdit()
-        self.buyer_input = QLineEdit()
-        self.purchasedate_input = QLineEdit()
-        self.description_input = QLineEdit()
-        self.quantity_input = QLineEdit()
-
-        layout.addRow('Product name:', self.name_input)
-        layout.addRow('Buyer name:', self.picture_input)
-        layout.addRow('Purchase Date:', self.price_input)
-        layout.addRow('Description:', self.description_input)
-        layout.addRow('Quantity:', self.quantity_input)
-
+        layout = QVBoxLayout()
         
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Name", "Price", "Image", "Description", "Quantity", "Owner"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        layout.addWidget(self.table)
         self.setLayout(layout)
+        self.load_products()
 
-    def view_buyers(self):
-        message=(f"VIEW_PURCHASES|{self.username}")
-        client.send(message.encode('utf-8'))
-        response = client.recv(4096).decode('utf-8')
-        if response == "Owner not found":
-            QMessageBox.warning(self, 'Error', response)
-        elif response == "No purchases found": 
-            QMessageBox.information(self, 'Info', response)
-        self.close()
-        
-class ViewWishlistWindow(QtWidgets.QWidget):
+    def load_products(self):
+        owner_username, ok = QtWidgets.QInputDialog.getText(self, 'Input Dialog', 'Enter the owner\'s username:')
+        if ok and owner_username:
+            message = f"VIEW_PRODUCTS_BY_OWNER|{owner_username}"
+            client.send(message.encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')
+            if response and "No products available" not in response:
+                products = response.split('|')
+                self.table.setRowCount(len(products))
+                for row, product_info in enumerate(products):
+                    try:
+                        name, price, image, description, quantity, owner = product_info.split(',')
+                        self.table.setItem(row, 0, QTableWidgetItem(name))
+                        self.table.setItem(row, 1, QTableWidgetItem(price))
+                        self.table.setItem(row, 2, QTableWidgetItem(image))
+                        self.table.setItem(row, 3, QTableWidgetItem(description))
+                        self.table.setItem(row, 4, QTableWidgetItem(quantity))
+                        self.table.setItem(row, 5, QTableWidgetItem(owner))
+                    except ValueError:
+                        print(f"Error processing product info: {product_info}")
+            else:
+                QMessageBox.information(self, "Products", response or "No products available")
+
+class ViewBuyersWindow(QWidget):
     def __init__(self, username):
         super().__init__()
-        self.username = username
-        self.setWindowTitle('View Wishlist')
-        self.setGeometry(200, 200, 400, 300)
+        self.username = username  # Owner's username
+        self.setWindowTitle("Buyers Information")
+        self.setGeometry(200, 200, 800, 600)
         self.initUI()
 
     def initUI(self):
-        layout = QFormLayout()
+        layout = QVBoxLayout()
 
-        self.name_input = QLineEdit()
-        self.picture_input = QLineEdit()
-        self.price_input = QLineEdit()
-        self.description_input = QLineEdit()
-        self.quantity_input = QLineEdit()
+        # Title
+        self.title = QLabel(f"Buyers of Products Owned by {self.username}")
+        self.title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(self.title)
 
-        layout.addRow('Product name:', self.name_input)
-        layout.addRow('Picture path:', self.picture_input)
-        layout.addRow('Price:', self.price_input)
-        layout.addRow('Description:', self.description_input)
-        layout.addRow('Quantity:', self.quantity_input)
+        # Table widget
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)  # Columns for buyer details
+        self.table.setHorizontalHeaderLabels(["Product Name", "Buyer Name", "Quantity", "Total Price"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.table)
 
-        self.submit_button = QPushButton('View Wishlist')
-        self.submit_button.setStyleSheet("background-color: lightblue")
-        self.submit_button.clicked.connect(self.submit_product)
+        # Load data button
+        self.load_button = QPushButton("Load Buyers")
+        self.load_button.clicked.connect(self.load_buyers)
+        layout.addWidget(self.load_button)
 
-        layout.addWidget(self.submit_button)
         self.setLayout(layout)
 
-    def view_wishlist(self):
+    def load_buyers(self):
+        try:
+            # Send request to the server
+            message = f"VIEW_BUYERS|{self.username}"
+            client.send(message.encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')
 
-        message=("VIEW_WISHLIST|self.username")
-        client.send(message.encode('utf-8'))
-        response = client.recv(4096).decode('utf-8')
-        if response == "No items in wishlist":
-            QMessageBox.information(self, 'Info', response)
-        else:
-            QMessageBox.information(self, 'Info', response)
-        self.close()
-
+            # Process the response
+            if response and "No buyers" not in response:
+                buyers = response.split('|')  # Each buyer is separated by '|'
+                self.table.setRowCount(len(buyers))
+                for row, buyer_info in enumerate(buyers):
+                    try:
+                        product_name, buyer_name, quantity, total_price = buyer_info.split(',')
+                        self.table.setItem(row, 0, QTableWidgetItem(product_name))
+                        self.table.setItem(row, 1, QTableWidgetItem(buyer_name))
+                        self.table.setItem(row, 2, QTableWidgetItem(quantity))
+                        self.table.setItem(row, 3, QTableWidgetItem(total_price))
+                    except ValueError:
+                        QMessageBox.warning(self, "Data Error", f"Error processing buyer info: {buyer_info}")
+            else:
+                QMessageBox.information(self, "No Buyers", "No buyers found for your products.")
+        except Exception as e:
+            QMessageBox.critical(self, "Connection Error", f"Failed to load buyers: {e}")
 
 class AddProductWindow(QtWidgets.QWidget):
     def __init__(self, username):
@@ -497,44 +726,94 @@ class OnlineWindow(QtWidgets.QWidget):
         self.close()
 
 class MessageUserWindow(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, username):
         super().__init__()
+        self.username = username
         self.setWindowTitle('Message User')
+        self.setGeometry(200, 200, 400, 200)
+        self.initUI()
+
+    def initUI(self):
+        layout = QVBoxLayout()
+
+        # Input for recipient username
+        self.recipient_input = QLineEdit()
+        self.recipient_input.setPlaceholderText("Enter the recipient's username")
+        layout.addWidget(self.recipient_input)
+
+        # Input for message content
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Enter your message")
+        layout.addWidget(self.message_input)
+
+        # Send message button
+        self.send_button = QPushButton('Send Message')
+        self.send_button.setStyleSheet("background-color: lightgreen")
+        self.send_button.clicked.connect(self.send_message)
+        layout.addWidget(self.send_button)
+
+        self.setLayout(layout)
+
+    def send_message(self):
+        recipient = self.recipient_input.text().strip()
+        message_text = self.message_input.text().strip()
+
+        if not recipient or not message_text:
+            QMessageBox.warning(self, "Error", "Both fields are required!")
+            return
+
+        # Construct the message and send to the server
+        message = f"MESSAGE|{self.username}|{recipient}|{message_text}"
+        try:
+            client.send(message.encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')
+
+            # Show success or failure message
+            if response == "Message sent":
+                QMessageBox.information(self, "Success", "Message sent successfully!")
+            else:
+                QMessageBox.warning(self, "Error", response)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to send message: {e}")
+
+        self.close()
+        
+class RetrieveMessagesWindow(QtWidgets.QWidget):
+    def __init__(self, username):
+        super().__init__()
+        self.username = username
+        self.setWindowTitle('Retrieve Messages')
         self.setGeometry(200, 200, 400, 300)
         self.initUI()
 
     def initUI(self):
-        layout = QFormLayout()
+        layout = QVBoxLayout()
+        
+        self.message_display = QLabel("No messages yet.")
+        self.message_display.setWordWrap(True)
+        layout.addWidget(self.message_display)
 
-        self.recipient_input = QLineEdit()
-        self.message_input = QLineEdit()
-        self.sender_input = QLineEdit()
+        self.fetch_button = QPushButton('Fetch Messages')
+        self.fetch_button.setStyleSheet("background-color: lightgreen")
+        self.fetch_button.clicked.connect(self.fetch_messages)
+        layout.addWidget(self.fetch_button)
 
-        layout.addRow('Recipient Username:', self.recipient_input)
-        layout.addRow('Your Username:', self.sender_input)
-        layout.addRow('Message:', self.message_input)
-
-        self.send_button = QPushButton('Send')
-        self.send_button.setStyleSheet("background-color: lightblue")
-        self.send_button.clicked.connect(self.send_message)
-
-        layout.addWidget(self.send_button)
         self.setLayout(layout)
 
-    def send_message(self):
-        recipient = self.recipient_input.text()
-        message_text = self.message_input.text()
-        sender_username = self.sender_input.text()
-
-        message=(f"MESSAGE|{recipient}|{message_text}|{sender_username}")
+    def fetch_messages(self):
+        message = f"GET_MESSAGES|{self.username}"
         client.send(message.encode('utf-8'))
         response = client.recv(4096).decode('utf-8')
-        QMessageBox.information(self, 'Info', response)
-        self.close()
+
+        if response == "No new messages":
+            self.message_display.setText(response)
+        else:
+            self.message_display.setText(response)
 
 class BuyProductWindow(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self,username):
         super().__init__()
+        self.username=username
         self.setWindowTitle('Buy Product')
         self.setGeometry(200, 200, 400, 300)
         self.initUI()
@@ -556,8 +835,8 @@ class BuyProductWindow(QtWidgets.QWidget):
         self.setLayout(layout)
 
     def buy_product(self):
-        product_id = self.product_id_input.text()
-        quantity = self.quantity_input.text()
+        product_id = self.product_id_input.text().strip()
+        quantity = self.quantity_input.text().strip()
 
         try:
             product_id = int(product_id)
@@ -571,12 +850,96 @@ class BuyProductWindow(QtWidgets.QWidget):
             QMessageBox.warning(self, 'Error', 'Invalid quantity. Please enter a valid number.')
             return
 
-        message=(f"BUY_PRODUCT|{product_id}|{quantity}")
+        message = f"BUY_PRODUCT|{self.username}|{product_id}|{quantity}"
+        try:
+            # Send message to the server
+            client.send(message.encode('utf-8'))
+            response = client.recv(4096).decode('utf-8')
+
+            # Inform the user of the server's response
+            if response.startswith("SUCCESS"):
+                QMessageBox.information(self, 'Success', 'Purchase completed successfully!')
+            else:
+                QMessageBox.warning(self, 'Error', response)
+        except socket.error as e:
+            QMessageBox.critical(self, 'Connection Error', f"Failed to communicate with server: {e}")
+        finally:
+            self.close()
+
+class RateProductWindow(QtWidgets.QWidget):
+    def __init__(self, username):
+        super().__init__()
+        self.username = username
+        self.setWindowTitle('Rate Product')
+        self.setGeometry(200, 200, 400, 300)
+        self.initUI()
+
+    def initUI(self):
+        layout = QFormLayout()
+
+        self.product_id_input = QLineEdit()
+        self.rating_input = QLineEdit()
+
+        layout.addRow('Product ID:', self.product_id_input)
+        layout.addRow('Rating (1-5):', self.rating_input)
+
+        self.submit_button = QPushButton('Submit Rating')
+        self.submit_button.setStyleSheet("background-color: lightblue")
+        self.submit_button.clicked.connect(self.rate_product)
+
+        layout.addWidget(self.submit_button)
+        self.setLayout(layout)
+
+    def submit_rating(self):
+        product_id = self.product_id_input.text()
+        rating = self.rating_input.text()
+
+        if not product_id.isdigit() or not rating.isdigit():
+            QMessageBox.warning(self, 'Error', 'Product ID and Rating must be valid numbers.')
+            return
+
+        if int(rating) < 1 or int(rating) > 5:
+            QMessageBox.warning(self, 'Error', 'Rating must be between 1 and 5.')
+            return
+
+        message = f"RATE_PRODUCT|{product_id}|{rating}|{self.username}"
         client.send(message.encode('utf-8'))
         response = client.recv(4096).decode('utf-8')
         QMessageBox.information(self, 'Info', response)
         self.close()
-    import socket
+        
+class ViewAverageRatingWindow(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('View Average Rating')
+        self.setGeometry(200, 200, 400, 200)
+        self.initUI()
+
+    def initUI(self):
+        layout = QFormLayout()
+
+        self.product_id_input = QLineEdit()
+        layout.addRow('Product ID:', self.product_id_input)
+
+        self.view_rating_button = QPushButton('View Rating')
+        self.view_rating_button.setStyleSheet("background-color: lightgreen")
+        self.view_rating_button.clicked.connect(self.view_average_rating)
+
+        layout.addWidget(self.view_rating_button)
+        self.setLayout(layout)
+
+    def view_average_rating(self):
+        product_id = self.product_id_input.text()
+
+        if not product_id.isdigit():
+            QMessageBox.warning(self, 'Error', 'Product ID must be a valid number.')
+            return
+
+        message = f"GET_AVERAGE_RATING|{product_id}"
+        client.send(message.encode('utf-8'))
+        response = client.recv(4096).decode('utf-8')
+        QMessageBox.information(self, 'Average Rating', response)
+
 
 class SearchProductsWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -624,8 +987,11 @@ class SearchProductsWindow(QtWidgets.QWidget):
         else:
             QMessageBox.information(self, 'Info', response)
 
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     main_window = AUBoutiqueApp()
     main_window.show()
     sys.exit(app.exec_())
+
+
