@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+
 @author: tracyghosn
 """
 
@@ -11,7 +15,7 @@ from PyQt5.QtWidgets import QWidget, QMessageBox, QTableWidget, QTableWidgetItem
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 8099
+SERVER_PORT = 9252
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((SERVER_HOST, SERVER_PORT))
@@ -234,9 +238,7 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.toggle_button.clicked.connect(self.toggle_mode)
         self.layout.addWidget(self.toggle_button)
 
-        self.layout.addWidget(self.retrieve_messages_button)
         self.layout.addWidget(self.view_products_button)
-        self.layout.addWidget(self.convert_currency_button)
         self.layout.addWidget(self.view_products_by_owner_button)
         self.layout.addWidget(self.add_product_button)
         self.layout.addWidget(self.search_product_button)
@@ -244,6 +246,8 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.layout.addWidget(self.buy_product_button)
         self.layout.addWidget(self.check_online_button)
         self.layout.addWidget(self.message_user_button)
+        self.layout.addWidget(self.convert_currency_button)
+        self.layout.addWidget(self.retrieve_messages_button)
         self.layout.addWidget(self.view_average_rate_button)
         self.layout.addWidget(self.submit_button)
         self.layout.addWidget(self.logout_button)
@@ -348,14 +352,14 @@ class MainMenuWindow(QtWidgets.QWidget):
             # Send logout request to the server
             message = f"LOGOUT|{self.username}"
             client.send(message.encode('utf-8'))
-    
+        
             # Receive the server's response
             response = client.recv(4096).decode('utf-8')
-    
-            # Check the server's response
+        
+            # Handle the server's response
             if response == "Logout successful":
                 QMessageBox.information(self, 'Info', 'You have been logged out successfully.')
-                self.close()
+                self.close()  # Close the current window
             else:
                 QMessageBox.warning(self, 'Error', f'Logout failed: {response}')
         except socket.error as e:
@@ -370,6 +374,7 @@ class MainMenuWindow(QtWidgets.QWidget):
                 client.close()
             except Exception:
                 pass  # Ignore errors during socket closure
+
 
 class CurrencyRatesWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -581,7 +586,7 @@ class ViewBuyersWindow(QWidget):
         layout = QVBoxLayout()
 
         # Title
-        self.title = QLabel(f"Buyers of Products Owned by {self.username}")
+        self.title = QLabel(f"Sales of {self.username}")
         self.title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(self.title)
 
@@ -616,9 +621,9 @@ class ViewBuyersWindow(QWidget):
                         self.table.setItem(row, 0, QTableWidgetItem(product_name))
                         self.table.setItem(row, 1, QTableWidgetItem(buyer_name))
                         self.table.setItem(row, 2, QTableWidgetItem(quantity))
-                        self.table.setItem(row, 3, QTableWidgetItem(total_price))
+                        self.table.setItem(row, 3, QTableWidgetItem(f"${float(total_price):.2f}"))
                     except ValueError:
-                        QMessageBox.warning(self, "Data Error", f"Error processing buyer info: {buyer_info}")
+                        QMessageBox.warning(self, "Data Error", response)
             else:
                 QMessageBox.information(self, "No Buyers", "No buyers found for your products.")
         except Exception as e:
@@ -995,4 +1000,5 @@ if __name__ == "__main__":
     main_window = AUBoutiqueApp()
     main_window.show()
     sys.exit(app.exec_())
+
 
