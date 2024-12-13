@@ -1,3 +1,6 @@
+@author: tracyghosn
+"""
+
 import socket
 import threading
 import sqlite3
@@ -15,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     password TEXT
 )''')
+
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY,
@@ -34,7 +38,6 @@ CREATE TABLE IF NOT EXISTS ratings (
     product_id INTEGER,
     username TEXT NOT NULL,
     rating INTEGER,
-    rating_date TEXT NOT NULL,
     FOREIGN KEY(product_id) REFERENCES products(id)
 )''')
 conn.commit()
@@ -56,11 +59,13 @@ cursor.execute('''
 CREATE TABLE IF NOT EXISTS purchases ( 
     id INTEGER PRIMARY KEY, 
     product_id INTEGER,
-    buyer_id INTEGER, 
+    buyer_id INTEGER,
+    owner_id INTEGER, 
     quantity INTEGER, 
-    purchase_date TEXT, 
+    total_price REAL,
     FOREIGN KEY(product_id) REFERENCES products(id), 
-    FOREIGN KEY(buyer_id) REFERENCES users(id)
+    FOREIGN KEY(buyer_id) REFERENCES users(id),
+    FOREIGN KEY (owner_id) REFERENCES users (id)
 )''') 
 conn.commit()
 
@@ -68,7 +73,7 @@ print("Database setup complete.")
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 8099
+SERVER_PORT = 9252
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((SERVER_HOST, SERVER_PORT))
 server.listen(5)
@@ -147,17 +152,23 @@ def handle_message(client_socket, message):
         buyer_username, product_id, quantity = (parts[1]), int(parts[2]), int(parts[3]) 
         cursor.execute('SELECT id FROM users WHERE username=?', (buyer_username,)) 
         buyer = cursor.fetchone() 
-        cursor.execute('SELECT owner_id, quantity FROM products WHERE id=?', (product_id,)) 
+        cursor.execute('SELECT owner_id, quantity, price FROM products WHERE id=?', (product_id,)) 
         product = cursor.fetchone() 
         if product and product[1] >= quantity and buyer: 
+            owner_id, available_quantity, price = product
+            buyer_id = buyer[0]
+            
             new_quantity = product[1] - quantity 
+            total_price = quantity * price
             if new_quantity == 0: 
                 cursor.execute('DELETE FROM products WHERE id=?', (product_id,)) 
             else: 
                 cursor.execute('UPDATE products SET quantity=? WHERE id=?', (new_quantity, product_id)) 
-                cursor.execute('INSERT INTO purchases (product_id, buyer_id, quantity, purchase_date) VALUES (?, ?, ?, ?)', 
-                               (product_id, buyer[0], quantity, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-                conn.commit() 
+                cursor.execute('''
+                    INSERT INTO purchases (product_id, buyer_id, owner_id, quantity, total_price)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (product_id, buyer_id, owner_id, quantity, total_price))
+                
                 confirmation_message = f"Product bought successfully! Collect from AUB Post Office on {datetime.now().strftime('%Y-%m-%d')}." 
                 client_socket.send(confirmation_message.encode('utf-8')) 
         else: 
@@ -173,29 +184,41 @@ def handle_message(client_socket, message):
         else: 
             client_socket.send(b"No products found")
             
-    elif command == "VIEW_BUYERS":
-        owner_username = parts[1]
+    elif command == 'VIEW_BUYERS':
         try:
-            # Query to fetch buyers for products owned by the given owner
+            # Extract the owner's username from the command
+            owner_username = parts[1].strip()
+    
+            # Fetch the owner's ID
+            cursor.execute('SELECT id FROM users WHERE username = ?', (owner_username,))
+            owner = cursor.fetchone()
+    
+            if not owner:
+                client_socket.send(b"Error: Owner not found.")
+                return
+    
+            owner_id = owner[0]
+    
+            # Fetch the purchase history for products owned by this owner
             cursor.execute('''
-                SELECT p.name AS product_name, u.username AS buyer_name, b.quantity, (b.quantity * p.price) AS total_price
+                SELECT p.name, u.username AS buyer_name, b.quantity, b.total_price
                 FROM purchases b
                 JOIN products p ON b.product_id = p.id
                 JOIN users u ON b.buyer_id = u.id
-                WHERE p.owner_id = (SELECT id FROM users WHERE username = ?)
-            ''', (owner_username,))
-            buyers = cursor.fetchall()
+                WHERE b.owner_id = ?
+            ''', (owner_id,))
+            purchases = cursor.fetchall()
     
-            # Format the response
-            if buyers:
-                response = '|'.join([f"{row[0]},{row[1]},{row[2]},{row[3]}" for row in buyers])
+            if purchases:
+                # Format the response as a pipe-separated string
+                response = '|'.join([f"{row[0]},{row[1]},{row[2]},{row[3]:.2f}" for row in purchases])
                 client_socket.send(response.encode('utf-8'))
             else:
-                client_socket.send(b"No buyers found for your products.")
+                client_socket.send(b"No purchases found for your products.")
         except Exception as e:
-            # Handle unexpected errors
             client_socket.send(f"Error: {str(e)}".encode('utf-8'))
-            
+
+     
     # Part of the handle_message function
     elif command == 'RATE_PRODUCT':
          try:
@@ -204,7 +227,7 @@ def handle_message(client_socket, message):
                  client_socket.send(b"Error: Rating must be between 1 and 5.")
                  return
              
-             cursor.execute('INSERT INTO ratings (product_id, username, rating) VALUES (?, ?, ?)', (product_id, user_id, rating))
+             cursor.execute('INSERT INTO ratings (product_id, username, rating) VALUES (?, ?, ?)', (product_id, username, rating))
              conn.commit()
              client_socket.send(b"Rating submitted successfully! ")
          except Exception as e:
@@ -326,14 +349,13 @@ def handle_message(client_socket, message):
         else:
             client_socket.send("Invalid currency codes.".encode('utf-8'))
             
-    elif command== 'LOGOUT':
-        username = parts[1]
-        if username in online_users:
-            del online_users[username]
-            
-            client_socket.send("Logout successful".encode('utf-8'))
+    elif command == 'LOGOUT':
+        user_id = clients.pop(client_socket, None)
+        if user_id:
+            online_users.pop(user_id, None)
+            client_socket.send(b"Logout successful")
         else:
-            client_socket.send("Error: User not logged in.".encode('utf-8'))
+            client_socket.send(b"Logout failed")
 
 def handle_client(client_socket, addr):
     print(f"Accepted connection from {addr}")
