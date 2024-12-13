@@ -523,10 +523,19 @@ class ViewProductsWindow(QtWidgets.QWidget):
                     name, price, image, description, quantity, owner = product_info.split(',')
                     self.table.setItem(row, 0, QTableWidgetItem(name))
                     self.table.setItem(row, 1, QTableWidgetItem(price))
-                    self.table.setItem(row, 2, QTableWidgetItem(image))
+                    
                     self.table.setItem(row, 3, QTableWidgetItem(description))
                     self.table.setItem(row, 4, QTableWidgetItem(quantity))
                     self.table.setItem(row, 5, QTableWidgetItem(owner))
+                    
+                    image_label = QLabel()
+                    pixmap = QPixmap(image)  # Load the image from the path
+                    if not pixmap.isNull():  # Check if the image loaded successfully
+                        image_label.setPixmap(pixmap.scaled(100, 100, aspectRatioMode=1))  # Scale the image
+                    else:
+                        print(f"Failed to load image from {image}")
+                        
+                    self.table.setCellWidget(row, 2, image_label)
                 except ValueError:
                     print(f"Error processing product info: {product_info}")
         else:
@@ -565,10 +574,19 @@ class ViewProductsByOwnerWindow(QtWidgets.QWidget):
                         name, price, image, description, quantity, owner = product_info.split(',')
                         self.table.setItem(row, 0, QTableWidgetItem(name))
                         self.table.setItem(row, 1, QTableWidgetItem(price))
-                        self.table.setItem(row, 2, QTableWidgetItem(image))
+                        
                         self.table.setItem(row, 3, QTableWidgetItem(description))
                         self.table.setItem(row, 4, QTableWidgetItem(quantity))
                         self.table.setItem(row, 5, QTableWidgetItem(owner))
+                        
+                        image_label = QLabel()
+                        pixmap = QPixmap(image)  # Load the image from the path
+                        if not pixmap.isNull():  # Check if the image loaded successfully
+                            image_label.setPixmap(pixmap.scaled(100, 100, aspectRatioMode=1))  # Scale the image
+                        else:
+                            print(f"Failed to load image from {image}")
+                            
+                        self.table.setCellWidget(row, 2, image_label)
                     except ValueError:
                         print(f"Error processing product info: {product_info}")
             else:
