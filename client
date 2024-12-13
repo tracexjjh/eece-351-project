@@ -1,3 +1,6 @@
+@author: tracyghosn
+"""
+
 import sys
 import socket
 import os
@@ -8,7 +11,7 @@ from PyQt5.QtWidgets import QWidget, QMessageBox, QTableWidget, QTableWidgetItem
 
 # Server details
 SERVER_HOST = '127.0.0.1'
-SERVER_PORT = 9992
+SERVER_PORT = 8099
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((SERVER_HOST, SERVER_PORT))
@@ -174,21 +177,10 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.title.setAlignment(QtCore.Qt.AlignCenter)
         self.layout.addWidget(self.title)
         
-        self.retrieve_messages_button = QPushButton('Retrieve Messages')
-        self.retrieve_messages_button.setStyleSheet("background-color: lightpink")
-        self.retrieve_messages_button.clicked.connect(self.retrieve_messages)
 
         self.view_products_button = QPushButton('View Products')
         self.view_products_button.setStyleSheet("background-color: lightcoral")
         self.view_products_button.clicked.connect(self.view_products)
-        
-        self.view_currency_rates_button = QPushButton('View Currency Rates')
-        self.view_currency_rates_button.setStyleSheet("background-color: lightpink")
-        self.view_currency_rates_button.clicked.connect(self.view_currency_rates_button)
-
-        self.convert_currency_button = QPushButton('Convert Currency')
-        self.convert_currency_button.setStyleSheet("background-color: lightcoral")
-        self.convert_currency_button.clicked.connect(self.convert_currency)
         
         self.view_products_by_owner_button = QPushButton('View Products By Owner')
         self.view_products_by_owner_button.setStyleSheet("background-color: lightpink")
@@ -218,6 +210,14 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.message_user_button.setStyleSheet("background-color: lightpink")
         self.message_user_button.clicked.connect(self.message_user)
         
+        self.convert_currency_button = QPushButton('Convert Currency')
+        self.convert_currency_button.setStyleSheet("background-color: lightcoral")
+        self.convert_currency_button.clicked.connect(self.convert_currency)
+        
+        self.retrieve_messages_button = QPushButton('Retrieve Messages')
+        self.retrieve_messages_button.setStyleSheet("background-color: lightpink")
+        self.retrieve_messages_button.clicked.connect(self.retrieve_messages)
+        
         self.view_average_rate_button = QPushButton("View Average Rating")
         self.view_average_rate_button.setStyleSheet("background-color: lightcoral")
         self.view_average_rate_button.clicked.connect(self.view_average_rate)
@@ -230,14 +230,12 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.logout_button.setStyleSheet("background-color: lightcoral")
         self.logout_button.clicked.connect(self.logout)
         
-        
         self.toggle_button = QPushButton("Switch to Dark Mode")
         self.toggle_button.clicked.connect(self.toggle_mode)
         self.layout.addWidget(self.toggle_button)
 
         self.layout.addWidget(self.retrieve_messages_button)
         self.layout.addWidget(self.view_products_button)
-        self.layout.addWidget(self.view_currency_rates_button)
         self.layout.addWidget(self.convert_currency_button)
         self.layout.addWidget(self.view_products_by_owner_button)
         self.layout.addWidget(self.add_product_button)
@@ -330,7 +328,7 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.online_window.show()
         
     def rate_product(self):
-        self.rate_product_window = RateProductWindow(self.user_id)
+        self.rate_product_window = RateProductWindow(self.username)
         self.rate_product_window.show()
     
     def view_average_rate(self): 
@@ -341,24 +339,9 @@ class MainMenuWindow(QtWidgets.QWidget):
         self.retrieve_messages_window = RetrieveMessagesWindow(self.username)
         self.retrieve_messages_window.show()
 
-    def view_currency_rates(self):
-        import json
-        try:
-            client.send("GET_CURRENCY_RATES".encode('utf-8'))
-            response = client.recv(4096).decode('utf-8')  # Receiving JSON encoded data
-            try:
-                rates = json.loads(response)  # Parse the JSON data
-                rates_str = "\n".join([f"{currency}: {rate:.2f}" for currency, rate in rates.items()])
-                QMessageBox.information(self, "Currency Rates", rates_str)
-            except json.JSONDecodeError:
-                QMessageBox.warning(self, "Error", "Failed to parse currency rates.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to fetch currency rates: {e}")
-
     def convert_currency(self):
         self.convert_window = ConvertCurrencyWindow()
         self.convert_window.show()
-    
                                                          
     def logout(self):
         try:
@@ -882,20 +865,24 @@ class RateProductWindow(QtWidgets.QWidget):
 
         layout.addRow('Product ID:', self.product_id_input)
         layout.addRow('Rating (1-5):', self.rating_input)
-
+        
         self.submit_button = QPushButton('Submit Rating')
         self.submit_button.setStyleSheet("background-color: lightblue")
-        self.submit_button.clicked.connect(self.rate_product)
-
+        self.submit_button.clicked.connect(self.submit_rating)
         layout.addWidget(self.submit_button)
+
         self.setLayout(layout)
 
     def submit_rating(self):
         product_id = self.product_id_input.text()
         rating = self.rating_input.text()
 
-        if not product_id.isdigit() or not rating.isdigit():
-            QMessageBox.warning(self, 'Error', 'Product ID and Rating must be valid numbers.')
+        if not product_id.isdigit():
+            QMessageBox.warning(self, 'Error', 'Product ID must be a valid number.')
+            return
+
+        if not rating.isdigit():
+            QMessageBox.warning(self, 'Error', 'Rating must be a valid number.')
             return
 
         if int(rating) < 1 or int(rating) > 5:
@@ -907,8 +894,8 @@ class RateProductWindow(QtWidgets.QWidget):
         response = client.recv(4096).decode('utf-8')
         QMessageBox.information(self, 'Info', response)
         self.close()
-        
-class ViewAverageRatingWindow(QtWidgets.QWidget):
+
+class ViewAverageRatingWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('View Average Rating')
@@ -918,27 +905,42 @@ class ViewAverageRatingWindow(QtWidgets.QWidget):
     def initUI(self):
         layout = QFormLayout()
 
+        # Input for product ID
         self.product_id_input = QLineEdit()
+        self.product_id_input.setPlaceholderText("Enter Product ID (e.g., 101)")
         layout.addRow('Product ID:', self.product_id_input)
 
-        self.view_rating_button = QPushButton('View Rating')
-        self.view_rating_button.setStyleSheet("background-color: lightgreen")
+        # Button to fetch average rating
+        self.view_rating_button = QPushButton('View Average Rating')
         self.view_rating_button.clicked.connect(self.view_average_rating)
-
         layout.addWidget(self.view_rating_button)
+
+        # Set layout
         self.setLayout(layout)
 
     def view_average_rating(self):
-        product_id = self.product_id_input.text()
+        product_id = self.product_id_input.text().strip()
 
+        # Validate product ID input
         if not product_id.isdigit():
             QMessageBox.warning(self, 'Error', 'Product ID must be a valid number.')
             return
 
-        message = f"GET_AVERAGE_RATING|{product_id}"
-        client.send(message.encode('utf-8'))
-        response = client.recv(4096).decode('utf-8')
-        QMessageBox.information(self, 'Average Rating', response)
+        try:
+            # Send request to the server
+            message = f"GET_AVERAGE_RATING|{product_id}"
+            client.send(message.encode('utf-8'))
+
+            # Receive server response
+            response = client.recv(4096).decode('utf-8')
+
+            # Display response to the user
+            QMessageBox.information(self, 'Average Rating', response)
+
+        except Exception as e:
+            # Handle connection errors
+            QMessageBox.critical(self, 'Connection Error', f"Failed to fetch average rating: {e}")
+
 
 
 class SearchProductsWindow(QtWidgets.QWidget):
@@ -993,5 +995,4 @@ if __name__ == "__main__":
     main_window = AUBoutiqueApp()
     main_window.show()
     sys.exit(app.exec_())
-
 
